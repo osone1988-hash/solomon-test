@@ -1,3 +1,5 @@
-(function(){ window.__TANA_GATE__ = 'ng'; })();
+(function(){ window.__TANA_GATE__ = 'ok'; })();
+
+
 
 

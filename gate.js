@@ -137,49 +137,96 @@
           return;
         }
 
-        // ルール判定
-        const { allOk, reason } = evalRules(config, rec, true);
-        const messages = config.messages || { ok: 'OK', ng: 'NG' };
-        const verdict = allOk ? 'OK' : 'NG';
+// ========= ここから差し替え（判定→1行生成→保存） =========
+async function judgeAndAppendRow(rec) {
+  const cfg = JSON.parse(rec.json_config.value || '{}');
 
-        // サブテーブル行を組み立て
-        const tblCode = config.table?.fieldCode || 'scan_table';
-        const col = config.table?.columns || {
-          datetime: 'scan_at',
-          A: 'col_a',
-          B: 'col_b',
-          C: 'col_c',
-          result: 'result',
-          reason: 'reason'
-        };
+  // 値マップ {A,B,C,...}
+  const valueMap = {};
+  (cfg.recordSchema || []).forEach(s => {
+    const f = rec[s.fieldCode];
+    let v = f ? f.value : null;
+    if (s.type === 'number')   v = (v === '' || v == null) ? null : Number(v);
+    if (s.type === 'datetime') v = v ? new Date(v) : null;
+    valueMap[s.key] = v;
+  });
 
-        const row = {
-          value: {}
-        };
-        // 表示用列
-        row.value[col.datetime] = { value: new Date().toISOString() };                  // いまの時刻（必要に応じて field_b にしたいならここを rec.record[field_b].value に）
-        row.value[col.A]        = { value: rec.record[(config.recordSchema.find(s=>s.key==='A')||{}).fieldCode]?.value ?? '' };
-        row.value[col.B]        = { value: rec.record[(config.recordSchema.find(s=>s.key==='B')||{}).fieldCode]?.value ?? '' };
-        row.value[col.C]        = { value: rec.record[(config.recordSchema.find(s=>s.key==='C')||{}).fieldCode]?.value ?? '' };
-        row.value[col.result]   = { value: verdict };
-        row.value[col.reason]   = { value: reason };
+  // ルール評価
+  const reasons = [];
+  const ok = (cfg.rules || []).every(r => {
+    const left = valueMap[r.key];
+    const op   = r.operator;
+    const right = r.value;
 
-        // 既存テーブルを取得して push
-        const app = kintone.app.getId();
-        const recordId = rec.recordId || rec.record.$id.value;
-        const current = rec.record[tblCode]?.value || [];
+    const str = (x) => (x ?? '').toString().toLowerCase();
+    const num = (x) => Number(x);
+    const d   = (x) => (x ? new Date(x).getTime() : null);
 
-        const body = {
-          app,
-          id: recordId,
-          record: {}
-        };
-        body.record[tblCode] = { value: [...current, row] };
+    if (r.type === 'text') {
+      if (op === 'equals')      return str(left) === str(right);
+      if (op === 'contains')    return str(left).includes(str(right));
+      if (op === 'notContains') return !str(left).includes(str(right));
+      reasons.push(`text未対応op:${op}`); return false;
+    }
+    if (r.type === 'number') {
+      const L = num(left);
+      if (op === '>=') return L >= num(right);
+      if (op === '>')  return L >  num(right);
+      if (op === '<=') return L <= num(right);
+      if (op === '<')  return L <  num(right);
+      if (op === 'between') {
+        const [min, max] = right || [];
+        return L >= num(min) && L <= num(max);
+      }
+      reasons.push(`number未対応op:${op}`); return false;
+    }
+    if (r.type === 'datetime') {
+      const L = d(left), R = d(right);
+      if (L == null || R == null) { reasons.push('datetime欠落'); return false; }
+      if (op === 'lte') return L <= R;
+      if (op === 'lt')  return L <  R;
+      if (op === 'gte') return L >= R;
+      if (op === 'gt')  return L >  R;
+      reasons.push(`datetime未対応op:${op}`); return false;
+    }
+    reasons.push(`未知type:${r.type}`); return false;
+  });
 
-        // PUT（revision:-1 で楽観ロック回避）
-        const url = kintone.api.url('/k/v1/record.json', true);
-        const res = await kintone.api(url, 'PUT', { ...body, revision: -1 });
-        console.log('PUT ok:', res);
+  // テーブル1行を構築
+  const cols = (cfg.ui?.table?.columns) || {};
+  const row = {};
+  const setCell = (fieldCode, value) => {
+    if (!fieldCode) return;
+    row[fieldCode] = { value };
+  };
+
+  // 日時列は「今」を入れる（field_b をコピーしたい場合は valueMap.B を使う）
+  setCell(cols.datetime, new Date().toISOString());
+  setCell(cols.A, valueMap.A);
+  setCell(cols.B, valueMap.B ? new Date(valueMap.B).toISOString() : '');
+  setCell(cols.C, valueMap.C);
+  setCell(cols.result, ok ? 'OK' : 'NG');
+  setCell(cols.reason, ok ? '' : reasons.join(' / '));
+
+  // 既存テーブル値を取得→末尾にpush
+  const tableCode = cfg.ui?.table?.fieldCode;
+  const table = rec[tableCode];
+  const newTable = (table?.value || []).concat([{ value: row }]);
+
+  // PUT
+  const body = {
+    app: kintone.app.getId(),
+    id: (rec.recordId || rec.$id?.value),
+    record: { [tableCode]: { value: newTable } }
+  };
+
+  const url = kintone.api.url('/k/v1/record.json', true);
+  const res = await kintone.api(url, 'PUT', body);
+  console.log('[TANA] PUT ok:', res);
+  alert(ok ? 'サブテーブルに行追加しました。' : 'NG行を追加しました（理由はテーブル参照）');
+}
+// ========= 差し替えここまで =========
+
 
         // 画面反映
         kintone.app.record.set({ record: Object.assign({}, rec.record, body.record) });
@@ -192,3 +239,4 @@
     };
   });
 })();
+

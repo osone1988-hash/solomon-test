@@ -1,79 +1,72 @@
 (function () {
-  // ---- 起動確認フラグ（Network / Console 確認用） ----
+  // 起動確認フラグ（Network/Consoleで読めたか確認用）
   window.__TANA_GATE__ = 'ok';
 
-  // ---- util ------------------------------------------------
-  const asNumber = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
-  const asDate   = (v) => {
+  // ========= util =========
+  const asNumber = (v) => (v === '' || v === null || v === undefined ? null : Number(v));
+  const asDate = (v) => {
     if (!v) return null;
     const d = new Date(v);
     return isNaN(d.getTime()) ? null : d;
   };
 
-  // number compare
+  // number / datetime / text の比較
   const cmpNum = (L, op, R) => {
     if (L === null) return false;
-    if (op === '>')  return L >  R;
+    if (op === '>') return L > R;
     if (op === '>=') return L >= R;
-    if (op === '<')  return L <  R;
+    if (op === '<') return L < R;
     if (op === '<=') return L <= R;
     if (op === '==') return L === R;
     if (op === 'between') return Array.isArray(R) && L >= R[0] && L <= R[1];
     return false;
   };
-
-  // datetime compare
   const cmpDate = (L, op, R) => {
     if (!L) return false;
     const l = L.getTime();
-    const r = Array.isArray(R)
-      ? R.map((d) => asDate(d)?.getTime())
-      : asDate(R)?.getTime();
-    if (r == null || (Array.isArray(r) && (r[0] == null || r[1] == null))) return false;
-    if (op === 'gt')  return l >  r;
-    if (op === 'gte') return l >= r;
-    if (op === 'lt')  return l <  r;
-    if (op === 'lte') return l <= r;
+    const r = Array.isArray(R) ? R.map((d) => asDate(d).getTime()) : asDate(R).getTime();
+    if (op === '>') return l > r;
+    if (op === '>=') return l >= r;
+    if (op === '<') return l < r;
+    if (op === '<=') return l <= r;
     if (op === '==') return l === r;
     if (op === 'between') return Array.isArray(r) && l >= r[0] && l <= r[1];
     return false;
   };
-
-  // text compare
   const cmpText = (L, op, R, opt) => {
     const lower = !!(opt && opt.ignoreCase);
     const toS = (x) => (x == null ? '' : String(x));
     const norm = (x) => (lower ? toS(x).toLowerCase() : toS(x));
     L = norm(L);
-    if (Array.isArray(R)) R = R.map(norm); else R = norm(R);
+    R = Array.isArray(R) ? R.map(norm) : norm(R);
 
     if (op === 'equals' || op === '==') return L === R;
-    if (op === 'contains')    return L.includes(R);
+    if (op === 'contains') return L.includes(R);
     if (op === 'notContains') return !L.includes(R);
-    if (op === 'in')          return Array.isArray(R) && R.includes(L);
-    if (op === 'notIn')       return Array.isArray(R) && !R.includes(L);
+    if (op === 'in') return Array.isArray(R) && R.includes(L);
+    if (op === 'notIn') return Array.isArray(R) && !R.includes(L);
     return false;
   };
 
-  // ---- ルール評価（record は kintone のレコードオブジェクトの record 部分） ----
-  function evaluateAllRules(config, record) {
+  // ========= ルール評価 =========
+  function evalRules(config, rec, log = false) {
     // key -> fieldCode
     const key2code = {};
     (config.recordSchema || []).forEach((s) => (key2code[s.key] = s.fieldCode));
 
     const readByKey = (key, type) => {
       const code = key2code[key];
-      const f = code && record[code];
+      const f = code && rec.record[code];
       const v = f ? f.value : null;
-      if (type === 'number')   return asNumber(v);
+      if (type === 'number') return asNumber(v);
       if (type === 'datetime') return asDate(v);
       return v; // text/raw
     };
 
     const results = [];
     for (const r of config.rules || []) {
-      const left  = readByKey(r.key, r.type);
-      const op    = r.operator;
+      const left = readByKey(r.key, r.type);
+      const op = r.operator;
       const right = r.value;
       let ok = false;
 
@@ -87,93 +80,107 @@
       } else {
         ok = false;
       }
-      results.push({ ok, reason: ok ? '' : `key=${r.key} op=${op} val=${JSON.stringify(r.value)}` });
+
+      if (log) console.log('[RULE]', { key: r.key, type: r.type, op, right, left, ok });
+      results.push({ ok, msg: ok ? '' : `key=${r.key} op=${op} val=${JSON.stringify(r.value)}` });
     }
 
-    const allOk  = results.every((x) => x.ok);
-    const reason = results.filter((x) => !x.ok).map((x) => x.reason).join(' / ');
-    return { allOk, reason };
+    return {
+      allOk: results.every((x) => x.ok),
+      reason: results.filter((x) => !x.ok).map((x) => x.msg).join(' / '),
+    };
   }
 
-  // ---- 判定 → 1行生成 → サブテーブルへ保存 -----------------
-  async function judgeAndAppendRow(record, cfg) {
-    // 1) ルール評価
-    const { allOk, reason } = evaluateAllRules(cfg, record);
+  // ========= 1行生成してサブテーブルに追記・保存 =========
+  async function judgeAndAppendRow(rec, config) {
+    // recordSchema から {A,B,C,...} -> 値 を作る
+    const valueMap = {};
+    (config.recordSchema || []).forEach((s) => {
+      const f = rec.record[s.fieldCode];
+      let v = f ? f.value : null;
+      if (s.type === 'number') v = asNumber(v);
+      if (s.type === 'datetime') v = asDate(v);
+      valueMap[s.key] = v;
+    });
 
-    // 2) 行データを組み立て
-    const cols = (cfg.ui?.table?.columns) || {};
-    const row  = {};
-    const put  = (code, value) => { if (code) row[code] = { value }; };
+    // ルール評価
+    const { allOk, reason } = evalRules(config, rec, true);
 
-    // recordSchema から A/B/C フィールドコードを引く
-    const key2code = {};
-    (cfg.recordSchema || []).forEach((s) => (key2code[s.key] = s.fieldCode));
+    // 行データ組み立て
+    const cols = (config.ui && config.ui.table && config.ui.table.columns) || {};
+    const row = {};
+    const put = (code, value) => {
+      if (code) row[code] = { value };
+    };
 
-    const vA = record[key2code.A]?.value ?? '';
-    const vB = record[key2code.B]?.value ?? '';
-    const vC = record[key2code.C]?.value ?? '';
-
-    // サブテーブル列へ詰める
-    put(cols.datetime, new Date().toISOString());                     // 取込時刻
-    put(cols.A, vA);
-    put(cols.B, vB ? new Date(vB).toISOString() : '');
-    put(cols.C, vC === '' ? '' : Number(vC));
+    // サブテーブル列の割り当て
+    put(cols.datetime, new Date().toISOString()); // 「今」
+    put(cols.A, valueMap.A != null ? String(valueMap.A) : '');
+    put(cols.B, valueMap.B ? new Date(valueMap.B).toISOString() : '');
+    put(cols.C, valueMap.C == null ? '' : valueMap.C);
     put(cols.result, allOk ? 'OK' : 'NG');
     put(cols.reason, allOk ? '' : reason);
 
-    // 3) 既存テーブルを取得して末尾に追加
-    const tableCode = cfg.ui?.table?.fieldCode;
-    const current   = record[tableCode]?.value || [];
-    const next      = current.concat([{ value: row }]);
+    // 既存テーブルを末尾連結してPUT
+    const tableCode = config.ui && config.ui.table && config.ui.table.fieldCode;
+    if (!tableCode) {
+      alert('設定JSONの ui.table.fieldCode が未設定です。');
+      return;
+    }
+    const curr = rec.record[tableCode]?.value || [];
+    const next = curr.concat([{ value: row }]);
 
-    // 4) PUT
     const body = {
       app: kintone.app.getId(),
-      id : record.$id?.value, // detail 画面なので $id あり
+      id: rec.recordId || rec.record.$id?.value,
       record: { [tableCode]: { value: next } },
     };
+
     const url = kintone.api.url('/k/v1/record.json', true);
     const res = await kintone.api(url, 'PUT', body);
-    console.log('[TANA] PUT ok', res);
+    console.log('[TANA] PUT ok:', res);
 
-    alert(allOk ? 'サブテーブルに行を追加しました。' : 'NG行を追加しました（理由はテーブル参照）');
-    // 画面更新（行がすぐ見えるように）
-    location.reload();
+    alert(allOk ? 'サブテーブルに行を追加しました。' : 'NG行を追加しました（理由はテーブル列 reason を参照）');
   }
 
-  // ---- ボタン設置（詳細画面） -------------------------------
+  // ========= ボタン設置 =========
   kintone.events.on('app.record.detail.show', () => {
     if (document.getElementById('tana-judge-btn')) return;
 
-    const space = kintone.app.record.getHeaderMenuSpaceElement?.()
-               || kintone.app.getHeaderMenuSpaceElement?.();
+    const space =
+      (kintone.app.record.getHeaderMenuSpaceElement && kintone.app.record.getHeaderMenuSpaceElement()) ||
+      (kintone.app.getHeaderMenuSpaceElement && kintone.app.getHeaderMenuSpaceElement());
     if (!space) return;
 
     const btn = document.createElement('button');
     btn.id = 'tana-judge-btn';
     btn.textContent = '判定して記録';
-    btn.style.cssText = 'padding:8px 12px; border-radius:6px; background:#3b82f6; color:#fff; border:none; cursor:pointer;';
+    btn.style.cssText =
+      'padding:8px 12px;border:none;border-radius:6px;background:#3b82f6;color:#fff;cursor:pointer;';
     space.appendChild(btn);
     console.log('[TANA] button mounted (detail.show)');
 
     btn.onclick = async () => {
       try {
-        const rec = kintone.app.record.get();              // { record, recordId, ... }
-        const cfgStr = rec.record.json_config?.value;
-        if (!cfgStr) { alert('設定JSON(json_config)が見つかりません。'); return; }
-
+        const rec = kintone.app.record.get();
+        const cfgStr = rec.record.json_config && rec.record.json_config.value;
+        if (!cfgStr) {
+          alert('設定JSON(json_config)が見つかりません。');
+          return;
+        }
         let config;
         try {
           config = JSON.parse(cfgStr);
+          alert('json_config: JSON parse OK');
         } catch (e) {
           alert('設定JSONのパースに失敗しました。');
           console.error(e);
           return;
         }
 
-        // ルール判定 → 1行生成 → 保存
-        await judgeAndAppendRow(rec.record, config);
-        return;
+        await judgeAndAppendRow(rec, config);
+        // 画面を最新化
+        location.reload();
       } catch (e) {
         console.error(e);
         alert('処理中にエラーが発生しました。');

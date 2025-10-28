@@ -149,11 +149,14 @@
         const curr = rec.record[tableCode]?.value || [];
         const next = curr.concat([{ value: newRow }]);
 
-        const body = {
-          app: kintone.app.getId(),
-          id: kintone.app.record.getId(),
-          record: { [tableCode]: { value: next } }
-        };
+         // 画面のレコードIDを確実に取得
++  const recordId = kintone.app.record.getId(); // 例: 1 など
++
++  const body = {
++    app: kintone.app.getId(),
++    id: recordId,
++    record: { [tableCode]: { value: next } }
++  };
 
         const url = kintone.api.url('/k/v1/record.json', true);
         const res = await kintone.api(url, 'PUT', body);
@@ -168,4 +171,5 @@
     };
   });
 })();
+
 

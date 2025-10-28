@@ -149,21 +149,22 @@
         const curr = rec.record[tableCode]?.value || [];
         const next = curr.concat([{ value: newRow }]);
 
-         // 画面のレコードIDを確実に取得
-+  const recordId = kintone.app.record.getId(); // 例: 1 など
-+
-+  const body = {
-+    app: kintone.app.getId(),
-+    id: recordId,
-+    record: { [tableCode]: { value: next } }
-+  };
+      // 既存テーブル → next を作った直後に続けて置く
+// 画面のレコードIDを確実に取得
+const recordId = kintone.app.record.getId(); // 例: 1 など
 
-        const url = kintone.api.url('/k/v1/record.json', true);
-        const res = await kintone.api(url, 'PUT', body);
-        console.log('[TANA] PUT ok', res);
-        alert(allOk ? 'OK：サブテーブルに行を追加しました。'
-                    : `NG：サブテーブルに行を追加しました。\n理由：${reason}`);
-        location.reload();
+const body = {
+  app: kintone.app.getId(),
+  id: recordId,
+  record: { [tableCode]: { value: next } }
+};
+
+const url = kintone.api.url('/k/v1/record.json', true);
+const res = await kintone.api(url, 'PUT', body);
+console.log('[TANA] PUT ok', res);
+alert(allOk ? 'OK：サブテーブルに行を追加しました。'
+            : `NG：サブテーブルに行を追加しました。\n理由：${reason}`);
+location.reload();
       } catch (e) {
         console.error(e);
         alert('処理中にエラーが発生しました。');
@@ -171,5 +172,6 @@
     };
   });
 })();
+
 
 

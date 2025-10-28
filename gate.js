@@ -151,7 +151,7 @@
 
         const body = {
           app: kintone.app.getId(),
-          id: rec.recordId || rec.$id?.value,
+          id: kintone.app.record.getId(),
           record: { [tableCode]: { value: next } }
         };
 
@@ -168,3 +168,4 @@
     };
   });
 })();
+

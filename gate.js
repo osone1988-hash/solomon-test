@@ -150,7 +150,6 @@
         const next = curr.concat([{ value: newRow }]);
 
       // 既存テーブル → next を作った直後に続けて置く
-// 画面のレコードIDを確実に取得
 const recordId = kintone.app.record.getId(); // 例: 1 など
 
 const body = {
@@ -172,6 +171,7 @@ location.reload();
     };
   });
 })();
+
 
 
 

@@ -14,6 +14,8 @@ function SolomonLanding() {
             </div>
           </div>
           <nav className="hidden md:flex items-center gap-6 text-sm">
+　　　　　　<a href="#roadmap" className="hover:text-blue-600">ロードマップ</a>
+　　　　　　<a href="#login" className="hover:text-blue-600">ログイン（準備中）</a>         
             <a href="#services" className="hover:text-blue-600">サービス</a>
             <a href="#features" className="hover:text-blue-600">特長</a>
             <a href="#pricing" className="hover:text-blue-600">料金</a>
@@ -193,6 +195,34 @@ function SolomonLanding() {
       </section>
 
       {/* Contact */}
+      {/* Member (準備中) */}
+<section id="login" className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16">
+  <h2 className="text-2xl md:text-3xl font-bold">会員ページ（準備中）</h2>
+  <p className="mt-3 text-slate-600">
+    ここでは将来的に「kintone接続の登録」「アプリ一覧」「JSの生成・配布URLの発行」を提供します。
+  </p>
+
+  <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6">
+    <h3 className="font-semibold">MVPで先にできること</h3>
+    <ul className="mt-2 list-disc list-inside text-sm text-slate-700 space-y-1">
+      <li>1レコード → A4 PDF の差し込み出力（kintoneボタン連携）</li>
+      <li>アプリごとの設定を保存し、JSを生成（配布URLを固定化）</li>
+      <li>発行ログの保存（だれが・いつ・どれを出力）</li>
+    </ul>
+    <p className="mt-4 text-sm text-slate-600">
+      会員機能が公開されたら、メールでご案内します。事前登録はこちらから。
+    </p>
+    <div className="mt-4">
+      <a
+        href="#contact"
+        className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-medium border border-slate-300 hover:bg-white bg-slate-100"
+      >
+        事前登録する（問い合わせフォームへ）
+      </a>
+    </div>
+  </div>
+</section>
+
       <section id="contact" className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16">
         <h2 className="text-2xl md:text-3xl font-bold">お問い合わせ</h2>
         <p className="mt-3 text-slate-600">要件の整理やデモのご相談はこちらから。1営業日以内にご連絡します。</p>
@@ -232,5 +262,6 @@ function SolomonLanding() {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SolomonLanding />);
+
 
 

@@ -13,15 +13,15 @@ function SolomonLanding() {
               <p className="text-xs text-slate-500">クラウド×現場改善</p>
             </div>
           </div>
-          <nav className="hidden md:flex items-center gap-6 text-sm">
-　　　　　　<a href="#roadmap" className="hover:text-blue-600">ロードマップ</a>
-　　　　　　<a href="#login" className="hover:text-blue-600">ログイン（準備中）</a>         
-            <a href="#services" className="hover:text-blue-600">サービス</a>
-            <a href="#features" className="hover:text-blue-600">特長</a>
-            <a href="#pricing" className="hover:text-blue-600">料金</a>
-            <a href="#faq" className="hover:text-blue-600">FAQ</a>
-            <a href="#contact" className="hover:text-blue-600">お問い合わせ</a>
-          </nav>
+         <nav className="hidden md:flex items-center gap-6 text-sm">
+ 　　　　　　 <a href="#roadmap" className="hover:text-blue-600">ロードマップ</a>
+ 　　　　　　 <a href="#login" className="hover:text-blue-600">ログイン（準備中）</a>
+  　　　　　　<a href="#services" className="hover:text-blue-600">サービス</a>
+  　　　　　　<a href="#features" className="hover:text-blue-600">特長</a>
+　　　　　　  <a href="#pricing" className="hover:text-blue-600">料金</a>
+　　　　　　  <a href="#faq" className="hover:text-blue-600">FAQ</a>
+　　　　　　  <a href="#contact" className="hover:text-blue-600">お問い合わせ</a>
+</nav>
           <a href="#contact" className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium bg-blue-600 text-white shadow hover:bg-blue-700 transition">
             無料相談
           </a>
@@ -230,33 +230,18 @@ function SolomonLanding() {
         {/* Google Form embed */}
         <div className="mt-6">
           <div className="rounded-2xl border border-slate-200 overflow-hidden">
-            <iframe
-              src="https://docs.google.com/forms/d/e/1FAIpQLSdEtR8mywUXsIJ1oH4rZSIVXhsx67hFnhQ2C4v5fNwm73pq0Q/viewform?embedded=true"
-              width="640"
-              height="1598"
-              frameBorder="0"
-              marginHeight="0"
-              marginWidth="0"
-              title="お問い合わせフォーム"
-            >
-              読み込んでいます…
-            </iframe>
-          </div>
-        </div>
-      </section>
-
-      {/* Footer */}
-      <footer className="border-t border-slate-200 py-10">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="text-sm text-slate-500">© 2025 合同会社ソロモンシステムズ</p>
-          <div className="flex items-center gap-6 text-sm">
-            <a href="#" className="hover:text-blue-600">プライバシー</a>
-            <a href="#" className="hover:text-blue-600">利用規約</a>
-            <a href="#contact" className="hover:text-blue-600">お問い合わせ</a>
-          </div>
-        </div>
-      </footer>
-      {/* Roadmap */}
+        <iframe
+  src="https://docs.google.com/forms/d/e/1FAIpQLSdEtR8mywUXsIJ1oH4rZSIVXhsx67hFnhQ2C4v5fNwm73pq0Q/viewform?embedded=true"
+  width="100%"
+  height="1200"
+  frameBorder="0"
+  marginHeight="0"
+  marginWidth="0"
+  title="お問い合わせフォーム"
+>
+  読み込んでいます…
+</iframe>
+              {/* Roadmap */}
 <section id="roadmap" className="bg-slate-50 border-y border-slate-200">
   <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
     <h2 className="text-2xl md:text-3xl font-bold">開発ロードマップ</h2>
@@ -292,12 +277,29 @@ function SolomonLanding() {
   </div>
 </section>
 
+          </div>
+        </div>
+      </section>
+
+      {/* Footer */}
+      <footer className="border-t border-slate-200 py-10">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <p className="text-sm text-slate-500">© 2025 合同会社ソロモンシステムズ</p>
+          <div className="flex items-center gap-6 text-sm">
+            <a href="#" className="hover:text-blue-600">プライバシー</a>
+            <a href="#" className="hover:text-blue-600">利用規約</a>
+            <a href="#contact" className="hover:text-blue-600">お問い合わせ</a>
+          </div>
+        </div>
+      </footer>
+    
     </div>
   );
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SolomonLanding />);
+
 
 
 

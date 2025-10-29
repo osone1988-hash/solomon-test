@@ -256,12 +256,49 @@ function SolomonLanding() {
           </div>
         </div>
       </footer>
+      {/* Roadmap */}
+<section id="roadmap" className="bg-slate-50 border-y border-slate-200">
+  <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
+    <h2 className="text-2xl md:text-3xl font-bold">開発ロードマップ</h2>
+    <div className="mt-6 grid md:grid-cols-3 gap-6 text-sm">
+      <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
+        <p className="text-xs font-semibold text-blue-600">Phase 1</p>
+        <h3 className="mt-1 font-semibold">会員基盤（準備）</h3>
+        <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
+          <li>認証・テナント分離（Supabase）</li>
+          <li>kintone接続メタの保存</li>
+        </ul>
+      </div>
+      <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
+        <p className="text-xs font-semibold text-blue-600">Phase 2</p>
+        <h3 className="mt-1 font-semibold">MVP：差し込み印刷</h3>
+        <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
+          <li>1レコード→A4 PDF 出力</li>
+          <li>kintoneボタン連携・発行ログ</li>
+        </ul>
+      </div>
+      <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
+        <p className="text-xs font-semibold text-blue-600">Phase 3</p>
+        <h3 className="mt-1 font-semibold">JS生成と配布</h3>
+        <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
+          <li>アプリ登録→JS生成URLの発行</li>
+          <li>バージョン管理・更新通知</li>
+        </ul>
+      </div>
+    </div>
+    <p className="mt-6 text-xs text-slate-500">
+      ※ 将来的にHTML→PDFレンダリングを追加し、高品質帳票（罫線/改ページ/多段表）に対応します。
+    </p>
+  </div>
+</section>
+
     </div>
   );
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SolomonLanding />);
+
 
 
 

@@ -32,7 +32,7 @@ function SolomonLanding() {
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-20 md:py-28 grid md:grid-cols-2 gap-10 items-center">
           <div>
             <h1 className="text-3xl md:text-5xl font-bold tracking-tight">
-              現場の「照合」と「棚卸」を、
+              123現場の「照合」と「棚卸」を、
               <span className="block text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-sky-400">かんたん・正確・素早く</span>
             </h1>
             <p className="mt-6 text-base md:text-lg text-slate-600">
@@ -232,3 +232,4 @@ function SolomonLanding() {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SolomonLanding />);
+

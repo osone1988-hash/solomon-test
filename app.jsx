@@ -199,7 +199,7 @@ function SolomonLanding() {
        <div className="mt-6">
   <div className="rounded-2xl border border-slate-200 overflow-hidden">
     <iframe
-      src="https://docs.google.com/forms/d/e/<iframe src="https://docs.google.com/forms/d/e/1FAIpQLSdEtR8mywUXsIJ1oH4rZSIVXhsx67hFnhQ2C4v5fNwm73pq0Q/viewform?embedded=true" width="640" height="1598" frameborder="0" marginheight="0" marginwidth="0">読み込んでいます…</iframe>/viewform?embedded=true"
+      src="https://docs.google.com/forms/d/e/1FAIpQLSdEtR8mywUXsIJ1oH4rZSIVXhsx67hFnhQ2C4v5fNwm73pq0Q/viewform?embedded=true"
       width="100%"
       height="920"
       frameBorder="0"
@@ -211,6 +211,7 @@ function SolomonLanding() {
     </iframe>
   </div>
 </div>
+
       </section>
 
       {/* Footer */}
@@ -230,4 +231,5 @@ function SolomonLanding() {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SolomonLanding />);
+
 

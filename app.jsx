@@ -20,9 +20,13 @@ function SolomonLanding() {
             <a href="#faq" className="hover:text-blue-600">FAQ</a>
             <a href="#contact" className="hover:text-blue-600">お問い合わせ</a>
           </nav>
-          <a href="#contact" className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium bg-blue-600 text-white shadow hover:bg-blue-700 transition">
-            無料相談
-          </a>
+         <a
+  href="y-osone@dakojp.com?subject=%E3%82%B5%E3%82%A4%E3%83%88%E5%95%8F%E3%81%84%E5%90%88%E3%82%8F%E3%81%9B"
+  className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium bg-blue-600 text-white shadow hover:bg-blue-700 transition"
+>
+  無料相談
+</a>
+
         </div>
       </header>
 
@@ -196,6 +200,12 @@ function SolomonLanding() {
       <section id="contact" className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16">
         <h2 className="text-2xl md:text-3xl font-bold">お問い合わせ</h2>
         <p className="mt-3 text-slate-600">要件の整理やデモのご相談はこちらから。1営業日以内にご連絡します。</p>
+        <a
+  href="mailto:y-osone@dakojp.com?subject=%E3%82%B5%E3%82%A4%E3%83%88%E5%95%8F%E3%81%84%E5%90%88%E3%82%8F%E3%81%9B&body=%E4%BC%9A%E7%A4%BE%E5%90%8D%EF%BC%9A%0D%0A%E3%81%8A%E5%90%8D%E5%89%8D%EF%BC%9A%0D%0A%E9%9B%BB%E8%A9%B1%EF%BC%9A%0D%0A%E5%95%8F%E3%81%84%E5%90%88%E3%82%8F%E3%81%9B%E5%86%85%E5%AE%B9%EF%BC%9A%0D%0A"
+  className="mt-4 inline-flex w-fit items-center justify-center rounded-xl px-5 py-3 text-sm font-medium border border-slate-300 hover:bg-slate-50"
+>
+  メールで問い合わせる
+</a>
         <form className="mt-6 grid gap-4" onSubmit={(e) => { e.preventDefault(); alert('送信（ダミー）'); }}>
           <input className="rounded-xl border border-slate-300 px-4 py-3 text-sm w-full" placeholder="お名前" />
           <input className="rounded-xl border border-slate-300 px-4 py-3 text-sm w-full" placeholder="メールアドレス" />
@@ -221,3 +231,4 @@ function SolomonLanding() {
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SolomonLanding />);
+

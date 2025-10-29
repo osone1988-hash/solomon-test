@@ -13,15 +13,15 @@ function SolomonLanding() {
               <p className="text-xs text-slate-500">クラウド×現場改善</p>
             </div>
           </div>
-         <nav className="hidden md:flex items-center gap-6 text-sm">
- 　　　　　　 <a href="#roadmap" className="hover:text-blue-600">ロードマップ</a>
- 　　　　　　 <a href="#login" className="hover:text-blue-600">ログイン（準備中）</a>
-  　　　　　　<a href="#services" className="hover:text-blue-600">サービス</a>
-  　　　　　　<a href="#features" className="hover:text-blue-600">特長</a>
-　　　　　　  <a href="#pricing" className="hover:text-blue-600">料金</a>
-　　　　　　  <a href="#faq" className="hover:text-blue-600">FAQ</a>
-　　　　　　  <a href="#contact" className="hover:text-blue-600">お問い合わせ</a>
-</nav>
+          <nav className="hidden md:flex items-center gap-6 text-sm">
+            <a href="#roadmap" className="hover:text-blue-600">ロードマップ</a>
+            <a href="#login" className="hover:text-blue-600">ログイン（準備中）</a>
+            <a href="#services" className="hover:text-blue-600">サービス</a>
+            <a href="#features" className="hover:text-blue-600">特長</a>
+            <a href="#pricing" className="hover:text-blue-600">料金</a>
+            <a href="#faq" className="hover:text-blue-600">FAQ</a>
+            <a href="#contact" className="hover:text-blue-600">お問い合わせ</a>
+          </nav>
           <a href="#contact" className="inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-medium bg-blue-600 text-white shadow hover:bg-blue-700 transition">
             無料相談
           </a>
@@ -44,9 +44,7 @@ function SolomonLanding() {
               <a href="#services" className="rounded-xl px-5 py-3 text-sm font-medium bg-blue-600 text-white shadow hover:bg-blue-700 transition">サービスを見る</a>
               <a href="#contact" className="rounded-xl px-5 py-3 text-sm font-medium border border-slate-300 hover:bg-slate-50 transition">デモ相談する</a>
             </div>
-            <div className="mt-6 text-xs text-slate-500">
-              ※ 検品工程や出荷前確認、棚卸カウントに最適です。
-            </div>
+            <div className="mt-6 text-xs text-slate-500">※ 検品工程や出荷前確認、棚卸カウントに最適です。</div>
           </div>
           <div className="relative">
             <div className="aspect-[4/3] rounded-2xl border border-slate-200 shadow-sm bg-white p-4">
@@ -96,9 +94,7 @@ function SolomonLanding() {
           <div className="rounded-2xl border border-slate-200 p-6 shadow-sm">
             <div className="text-sm font-semibold text-blue-600">照合</div>
             <h3 className="mt-1 text-xl font-semibold">SHO-GO（仮称）</h3>
-            <p className="mt-2 text-slate-600">
-              製品→ラベルの固定スキャン順で、QRに含まれる製品名・ロット・製造日・サイズを照合。合否判定と履歴記録を自動化し、作業者IDも保存します。
-            </p>
+            <p className="mt-2 text-slate-600">製品→ラベルの固定スキャン順で、QRに含まれる製品名・ロット・製造日・サイズを照合。合否判定と履歴記録を自動化し、作業者IDも保存します。</p>
             <ul className="mt-4 space-y-2 text-sm text-slate-700 list-disc list-inside">
               <li>キントーンのフィールド照合に対応</li>
               <li>スマホ/QRリーダー利用OK（モバイル対応）</li>
@@ -109,9 +105,7 @@ function SolomonLanding() {
           <div className="rounded-2xl border border-slate-200 p-6 shadow-sm">
             <div className="text-sm font-semibold text-blue-600">棚卸・在庫</div>
             <h3 className="mt-1 text-xl font-semibold">TANA-OROSHI（仮称）</h3>
-            <p className="mt-2 text-slate-600">
-              レコードごとに最大15項目まで読み取り条件を設定。合致したスキャンを合格とし、在庫集計や差異分析を効率化します。
-            </p>
+            <p className="mt-2 text-slate-600">レコードごとに最大15項目まで読み取り条件を設定。合致したスキャンを合格とし、在庫集計や差異分析を効率化します。</p>
             <ul className="mt-4 space-y-2 text-sm text-slate-700 list-disc list-inside">
               <li>柔軟な条件設定（ソロモンのマイページで編集）</li>
               <li>棚卸の進捗ダッシュボード</li>
@@ -194,90 +188,80 @@ function SolomonLanding() {
         </div>
       </section>
 
-      {/* Contact */}
       {/* Member (準備中) */}
-<section id="login" className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16">
-  <h2 className="text-2xl md:text-3xl font-bold">会員ページ（準備中）</h2>
-  <p className="mt-3 text-slate-600">
-    ここでは将来的に「kintone接続の登録」「アプリ一覧」「JSの生成・配布URLの発行」を提供します。
-  </p>
+      <section id="login" className="scroll-mt-24 mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16">
+        <h2 className="text-2xl md:text-3xl font-bold">会員ページ（準備中）</h2>
+        <p className="mt-3 text-slate-600">
+          ここでは将来的に「kintone接続の登録」「アプリ一覧」「JSの生成・配布URLの発行」を提供します。
+        </p>
+        <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6">
+          <h3 className="font-semibold">MVPで先にできること</h3>
+          <ul className="mt-2 list-disc list-inside text-sm text-slate-700 space-y-1">
+            <li>1レコード → A4 PDF の差し込み出力（kintoneボタン連携）</li>
+            <li>アプリごとの設定を保存し、JSを生成（配布URLを固定化）</li>
+            <li>発行ログの保存（だれが・いつ・どれを出力）</li>
+          </ul>
+          <p className="mt-4 text-sm text-slate-600">会員機能が公開されたら、メールでご案内します。事前登録はこちらから。</p>
+          <div className="mt-4">
+            <a href="#contact" className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-medium border border-slate-300 hover:bg-white bg-slate-100">
+              事前登録する（問い合わせフォームへ）
+            </a>
+          </div>
+        </div>
+      </section>
 
-  <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-6">
-    <h3 className="font-semibold">MVPで先にできること</h3>
-    <ul className="mt-2 list-disc list-inside text-sm text-slate-700 space-y-1">
-      <li>1レコード → A4 PDF の差し込み出力（kintoneボタン連携）</li>
-      <li>アプリごとの設定を保存し、JSを生成（配布URLを固定化）</li>
-      <li>発行ログの保存（だれが・いつ・どれを出力）</li>
-    </ul>
-    <p className="mt-4 text-sm text-slate-600">
-      会員機能が公開されたら、メールでご案内します。事前登録はこちらから。
-    </p>
-    <div className="mt-4">
-      <a
-        href="#contact"
-        className="inline-flex items-center justify-center rounded-xl px-5 py-3 text-sm font-medium border border-slate-300 hover:bg-white bg-slate-100"
-      >
-        事前登録する（問い合わせフォームへ）
-      </a>
-    </div>
-  </div>
-</section>
-
+      {/* Contact */}
       <section id="contact" className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16">
         <h2 className="text-2xl md:text-3xl font-bold">お問い合わせ</h2>
         <p className="mt-3 text-slate-600">要件の整理やデモのご相談はこちらから。1営業日以内にご連絡します。</p>
-
-        {/* Google Form embed */}
         <div className="mt-6">
           <div className="rounded-2xl border border-slate-200 overflow-hidden">
-        <iframe
-  src="https://docs.google.com/forms/d/e/1FAIpQLSdEtR8mywUXsIJ1oH4rZSIVXhsx67hFnhQ2C4v5fNwm73pq0Q/viewform?embedded=true"
-  width="100%"
-  height="1200"
-  frameBorder="0"
-  marginHeight="0"
-  marginWidth="0"
-  title="お問い合わせフォーム"
->
-  読み込んでいます…
-</iframe>
-              {/* Roadmap */}
-<section id="roadmap" className="bg-slate-50 border-y border-slate-200">
-  <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
-    <h2 className="text-2xl md:text-3xl font-bold">開発ロードマップ</h2>
-    <div className="mt-6 grid md:grid-cols-3 gap-6 text-sm">
-      <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
-        <p className="text-xs font-semibold text-blue-600">Phase 1</p>
-        <h3 className="mt-1 font-semibold">会員基盤（準備）</h3>
-        <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
-          <li>認証・テナント分離（Supabase）</li>
-          <li>kintone接続メタの保存</li>
-        </ul>
-      </div>
-      <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
-        <p className="text-xs font-semibold text-blue-600">Phase 2</p>
-        <h3 className="mt-1 font-semibold">MVP：差し込み印刷</h3>
-        <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
-          <li>1レコード→A4 PDF 出力</li>
-          <li>kintoneボタン連携・発行ログ</li>
-        </ul>
-      </div>
-      <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
-        <p className="text-xs font-semibold text-blue-600">Phase 3</p>
-        <h3 className="mt-1 font-semibold">JS生成と配布</h3>
-        <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
-          <li>アプリ登録→JS生成URLの発行</li>
-          <li>バージョン管理・更新通知</li>
-        </ul>
-      </div>
-    </div>
-    <p className="mt-6 text-xs text-slate-500">
-      ※ 将来的にHTML→PDFレンダリングを追加し、高品質帳票（罫線/改ページ/多段表）に対応します。
-    </p>
-  </div>
-</section>
-
+            <iframe
+              src="https://docs.google.com/forms/d/e/1FAIpQLSdEtR8mywUXsIJ1oH4rZSIVXhsx67hFnhQ2C4v5fNwm73pq0Q/viewform?embedded=true"
+              width="100%"
+              height="1200"
+              frameBorder="0"
+              marginHeight="0"
+              marginWidth="0"
+              title="お問い合わせフォーム"
+            >
+              読み込んでいます…
+            </iframe>
           </div>
+        </div>
+      </section>
+
+      {/* Roadmap */}
+      <section id="roadmap" className="scroll-mt-24 bg-slate-50 border-y border-slate-200">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-16">
+          <h2 className="text-2xl md:text-3xl font-bold">開発ロードマップ</h2>
+          <div className="mt-6 grid md:grid-cols-3 gap-6 text-sm">
+            <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
+              <p className="text-xs font-semibold text-blue-600">Phase 1</p>
+              <h3 className="mt-1 font-semibold">会員基盤（準備）</h3>
+              <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
+                <li>認証・テナント分離（Supabase）</li>
+                <li>kintone接続メタの保存</li>
+              </ul>
+            </div>
+            <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
+              <p className="text-xs font-semibold text-blue-600">Phase 2</p>
+              <h3 className="mt-1 font-semibold">MVP：差し込み印刷</h3>
+              <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
+                <li>1レコード→A4 PDF 出力</li>
+                <li>kintoneボタン連携・発行ログ</li>
+              </ul>
+            </div>
+            <div className="rounded-2xl bg-white p-6 border border-slate-200 shadow-sm">
+              <p className="text-xs font-semibold text-blue-600">Phase 3</p>
+              <h3 className="mt-1 font-semibold">JS生成と配布</h3>
+              <ul className="mt-2 list-disc list-inside text-slate-700 space-y-1">
+                <li>アプリ登録→JS生成URLの発行</li>
+                <li>バージョン管理・更新通知</li>
+              </ul>
+            </div>
+          </div>
+          <p className="mt-6 text-xs text-slate-500">※ 将来的にHTML→PDFレンダリングを追加し、高品質帳票（罫線/改ページ/多段表）に対応します。</p>
         </div>
       </section>
 
@@ -292,15 +276,9 @@ function SolomonLanding() {
           </div>
         </div>
       </footer>
-    
     </div>
   );
 }
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(<SolomonLanding />);
-
-
-
-
-

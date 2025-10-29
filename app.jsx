@@ -196,12 +196,23 @@ function SolomonLanding() {
       <section id="contact" className="mx-auto max-w-3xl px-4 sm:px-6 lg:px-8 py-16">
         <h2 className="text-2xl md:text-3xl font-bold">お問い合わせ</h2>
         <p className="mt-3 text-slate-600">要件の整理やデモのご相談はこちらから。1営業日以内にご連絡します。</p>
-        <form className="mt-6 grid gap-4" onSubmit={(e) => { e.preventDefault(); alert('送信（ダミー）'); }}>
-          <input className="rounded-xl border border-slate-300 px-4 py-3 text-sm w-full" placeholder="お名前" />
-          <input className="rounded-xl border border-slate-300 px-4 py-3 text-sm w-full" placeholder="メールアドレス" />
-          <textarea className="rounded-xl border border-slate-300 px-4 py-3 text-sm w-full min-h-[120px]" placeholder="ご相談内容（現場の状況やキントーン有無など）" />
-          <button type="submit" className="rounded-xl px-5 py-3 text-sm font-medium bg-blue-600 text-white shadow hover:bg-blue-700 transition w-fit">送信（ダミー）</button>
-        </form>
+
+        {/* Google Form embed */}
+        <div className="mt-6">
+          <div className="rounded-2xl border border-slate-200 overflow-hidden">
+            <iframe
+              src="https://docs.google.com/forms/d/e/1FAIpQLSdEtR8mywUXsIJ1oH4rZSIVXhsx67hFnhQ2C4v5fNwm73pq0Q/viewform?embedded=true"
+              width="640"
+              height="1598"
+              frameBorder="0"
+              marginHeight="0"
+              marginWidth="0"
+              title="お問い合わせフォーム"
+            >
+              読み込んでいます…
+            </iframe>
+          </div>
+        </div>
       </section>
 
       {/* Footer */}

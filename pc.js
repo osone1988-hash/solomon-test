@@ -8,26 +8,72 @@
   };
   const isoNow = () => new Date().toISOString();
 
-  // 画面用セルオブジェクト（type 付き）
+  // フィールドコード -> 画面用 type
+  const COL_TYPES = {
+    scan_at:      'DATETIME',
+    col_prod:     'SINGLE_LINE_TEXT',
+    col_width:    'NUMBER',
+    col_length:   'NUMBER',
+    lot_no:       'SINGLE_LINE_TEXT',
+    label_no:     'SINGLE_LINE_TEXT',
+    col_packs:    'NUMBER',
+    col_rotation: 'NUMBER',
+    result:       'SINGLE_LINE_TEXT',
+    reason:       'MULTI_LINE_TEXT',
+  };
+
+  // 画面用セル
   const screenCell = (type, value) => ({ type, value });
 
   // 画面用の1行（サブテーブル）
   function buildScreenRow(row) {
-    // row はプリミティブ値（画面表示用）を入れて渡す
     return {
       value: {
-        scan_at:      screenCell('DATETIME', row.scan_at),
-        col_prod:     screenCell('SINGLE_LINE_TEXT', row.col_prod ?? ''),
-        col_width:    screenCell('NUMBER', row.col_width == null ? null : Number(row.col_width)),
-        col_length:   screenCell('NUMBER', row.col_length == null ? null : Number(row.col_length)),
-        lot_no:       screenCell('SINGLE_LINE_TEXT', row.lot_no ?? ''),
-        label_no:     screenCell('SINGLE_LINE_TEXT', row.label_no ?? ''),
-        col_packs:    screenCell('NUMBER', row.col_packs == null ? null : Number(row.col_packs)),
-        col_rotation: screenCell('NUMBER', row.col_rotation == null ? null : Number(row.col_rotation)),
-        result:       screenCell('SINGLE_LINE_TEXT', row.result ?? ''),
-        reason:       screenCell('MULTI_LINE_TEXT', row.reason ?? '')
+        scan_at:      screenCell(COL_TYPES.scan_at, row.scan_at),
+        col_prod:     screenCell(COL_TYPES.col_prod, row.col_prod ?? ''),
+        col_width:    screenCell(COL_TYPES.col_width, row.col_width == null ? null : Number(row.col_width)),
+        col_length:   screenCell(COL_TYPES.col_length, row.col_length == null ? null : Number(row.col_length)),
+        lot_no:       screenCell(COL_TYPES.lot_no, row.lot_no ?? ''),
+        label_no:     screenCell(COL_TYPES.label_no, row.label_no ?? ''),
+        col_packs:    screenCell(COL_TYPES.col_packs, row.col_packs == null ? null : Number(row.col_packs)),
+        col_rotation: screenCell(COL_TYPES.col_rotation, row.col_rotation == null ? null : Number(row.col_rotation)),
+        result:       screenCell(COL_TYPES.result, row.result ?? ''),
+        reason:       screenCell(COL_TYPES.reason, row.reason ?? '')
       }
     };
+  }
+
+  // 既存行（画面 or PUT 由来）を **必ず画面用(type付き)** に正規化する
+  function normalizeScreenRows(rawRows) {
+    return (rawRows || []).map((r) => {
+      const out = { value: {} };
+      const v = r?.value || {};
+      Object.keys(COL_TYPES).forEach((k) => {
+        const t = COL_TYPES[k];
+        const cell = v[k];
+
+        if (cell && typeof cell === 'object' && 'type' in cell && 'value' in cell) {
+          // すでに画面用 → そのまま
+          out.value[k] = { type: t, value: cell.value };
+        } else if (cell && typeof cell === 'object' && 'value' in cell) {
+          // PUT形（型なし）→ 型を付与
+          out.value[k] = { type: t, value: cell.value };
+        } else if (cell != null) {
+          // 万一プリミティブが入っていたら型を付け直す
+          out.value[k] = { type: t, value: cell };
+        } else {
+          // 無い列は空値を型付きで用意
+          const empty =
+            t === 'NUMBER' ? null :
+            t === 'DATETIME' ? '' :
+            '';
+          out.value[k] = { type: t, value: empty };
+        }
+      });
+      // 既存の row.id はそのまま（あってもなくてもOK）
+      if (r.id) out.id = r.id;
+      return out;
+    });
   }
 
   // PUT用の1行（サブテーブル）
@@ -50,7 +96,6 @@
 
   // ルール評価（A/B/C）
   function evalRules(config, recValues) {
-    // recValues は次の形を想定： { A:'...', B:'YYYY-...', C:number }
     const rules = config.rules || [];
     const reasons = [];
     let allOk = true;
@@ -98,26 +143,21 @@
     return { allOk, reason: reasons.join(' / ') };
   }
 
-  // 音声
+  // 音声（GitHub Pages 上に置いてください）
   const sounds = {
     ok: new Audio('https://osone1988-hash.github.io/solomon-test/assets/sound_ok.mp3'),
     ng: new Audio('https://osone1988-hash.github.io/solomon-test/assets/sound_error.mp3')
   };
-
   function playOk(vol) { try { sounds.ok.volume = vol ?? 0.4; sounds.ok.play(); } catch(e){} }
   function playNg(vol) { try { sounds.ng.volume = vol ?? 0.4; sounds.ng.play(); } catch(e){} }
 
-  // ====== QRパース（7項目） ======
-  // 例： "mekkiCUPET0812vc 16 6000 51104 AA 2 1"
+  // ====== QR（7項目） ======
   function parseSevenItems(raw) {
-    // 区切りは空白・タブを許容
     const parts = (raw || '').trim().split(/\s+/);
-    // 7個より長ければ先頭7つ、短ければ不足分は空文字に
     const [prod, width, length, lot, label, packs, rotation] = [
       parts[0] ?? '', parts[1] ?? '', parts[2] ?? '',
       parts[3] ?? '', parts[4] ?? '', parts[5] ?? '', parts[6] ?? ''
     ];
-
     return {
       col_prod: prod,
       col_width: asNumber(width),
@@ -129,25 +169,18 @@
     };
   }
 
-  // ====== 編集画面に SCAN UI を設置 ======
+  // ====== 編集画面：SCAN UI ======
   kintone.events.on('app.record.edit.show', (event) => {
-    // 既に設置済みならスキップ
     if (document.getElementById('tana-scan-box')) return event;
 
     const rec = event.record;
 
-    // 1) JSON設定読み込み（json_config -> json の順に）
-    let cfgStr = rec.json_config?.value || rec.json?.value || '';
+    // 設定JSON（json_config -> json）
+    const cfgStr = rec.json_config?.value || rec.json?.value || '';
     let config = {};
-    try {
-      config = cfgStr ? JSON.parse(cfgStr) : {};
-    } catch (e) {
-      alert('設定JSONのパースに失敗しました。');
-      console.error(e);
-      return event;
-    }
+    try { config = cfgStr ? JSON.parse(cfgStr) : {}; }
+    catch (e) { alert('設定JSONのパースに失敗しました。'); console.error(e); return event; }
 
-    // 2) UI設置
     const area = document.createElement('div');
     area.id = 'tana-scan-box';
     area.style.cssText = 'padding:8px;background:#fff2b3;border:1px solid #e5d17a;margin:8px 0;border-radius:6px;';
@@ -156,36 +189,26 @@
       <input id="tana-scan-input" type="text" style="width:420px;padding:6px;" placeholder="ここにスキャン（Enterで判定）">
       <button id="tana-scan-clear" style="margin-left:8px;">クリア</button>
     `;
+    const container = document.querySelector('.gaia-argoui-app-editlayout-wrapper') || document.body;
+    container.prepend(area);
 
-    // 先頭のフィールドの上に差し込む（見やすい位置に）
-    const root = kintone.app.record.getSpaceElement?.('') || document.querySelector('.gaia-argoui-app-editlayout-body');
-    const target = document.querySelector('.gaia-argoui-app-editlayout-wrapper') || root || document.body;
-    target.prepend(area);
-
-    // ハンドラ
     const input = document.getElementById('tana-scan-input');
-    const btnClear = document.getElementById('tana-scan-clear');
-    btnClear.onclick = () => { input.value = ''; input.focus(); };
+    document.getElementById('tana-scan-clear').onclick = () => { input.value = ''; input.focus(); };
 
     input.addEventListener('keydown', async (e) => {
       if (e.key !== 'Enter') return;
-
       const raw = input.value.trim();
       if (!raw) return;
 
       try {
-        // 2-1) QR分解（7項目）
         const parsed = parseSevenItems(raw);
 
-        // 2-2) ルール判定のための A/B/C を、現在のレコードから取得
-        // A: field_a(text), B: field_b(datetime), C: field_c(number)
+        // ルール評価用 A/B/C
         const A = rec.field_a?.value ?? '';
         const B = rec.field_b?.value ?? '';
         const C = asNumber(rec.field_c?.value);
-
         const { allOk, reason } = evalRules(config, { A, B, C });
 
-        // 2-3) 行データ（画面表示用のプリミティブ値）
         const screenRowData = {
           scan_at: isoNow(),
           ...parsed,
@@ -193,33 +216,39 @@
           reason: allOk ? '' : reason
         };
 
-        // 2-4) 画面に反映（type付き）
         const tableCode = config.ui?.table?.fieldCode || 'scan_table';
+
+        // 1) 既存行を **正規化**
         const curr = rec[tableCode]?.value || [];
-        const nextScreenRows = curr.concat([ buildScreenRow(screenRowData) ]);
+        const normalized = normalizeScreenRows(curr);
+
+        // 2) 新行を画面用で追加して set
+        const nextScreenRows = normalized.concat([ buildScreenRow(screenRowData) ]);
         rec[tableCode].value = nextScreenRows;
         kintone.app.record.set({ record: rec });
 
-        // 2-5) サーバにPUT（typeなし）
+        // 3) PUT 用の形でサーバ反映
         const url = kintone.api.url('/k/v1/record.json', true);
         const putBody = {
           app: kintone.app.getId(),
           id: rec.$id?.value || event.recordId,
           record: {
             [tableCode]: {
-              value: (curr.map(r => ({ id: r.id, value: Object.fromEntries(
-                Object.keys(r.value).map(k => [k, { value: r.value[k].value }])
-              )}))).concat([ buildPutRow(screenRowData) ])
+              value: nextScreenRows.map(r => ({
+                id: r.id, // 既存行は id を残す
+                value: Object.fromEntries(
+                  Object.keys(r.value).map(k => [k, { value: r.value[k].value }])
+                )
+              }))
             }
           }
         };
         await kintone.api(url, 'PUT', putBody);
 
-        // 2-6) 音（最後に）
+        // 4) 音
         if (allOk) playOk(config.sounds?.ok?.volume ?? 0.4);
         else playNg(config.sounds?.ng?.volume ?? 0.4);
 
-        // 次のスキャンへ
         input.value = '';
         input.focus();
 
@@ -229,7 +258,6 @@
       }
     });
 
-    // 初回フォーカス
     input.focus();
     return event;
   });

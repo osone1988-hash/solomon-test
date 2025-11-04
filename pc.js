@@ -1,224 +1,236 @@
 (function () {
-  // ===== util =====
+  // ====== ユーティリティ ======
   const asNumber = (v) => (v === '' || v == null ? null : Number(v));
   const asDate = (v) => {
     if (!v) return null;
     const d = new Date(v);
     return isNaN(d.getTime()) ? null : d;
   };
+  const isoNow = () => new Date().toISOString();
 
-  // 比較
-  const cmpNum = (L, op, R) => {
-    if (L == null) return false;
-    if (op === '>') return L > R;
-    if (op === '>=') return L >= R;
-    if (op === '<') return L < R;
-    if (op === '<=') return L <= R;
-    if (op === '==') return L === R;
-    if (op === 'between') return Array.isArray(R) && L >= R[0] && L <= R[1];
-    return false;
-  };
-  const cmpDate = (L, op, R) => {
-    if (!L) return false;
-    const l = L.getTime();
-    const r = Array.isArray(R) ? R.map((d) => asDate(d).getTime()) : asDate(R).getTime();
-    if (op === '>') return l > r;
-    if (op === '>=') return l >= r;
-    if (op === '<') return l < r;
-    if (op === '<=') return l <= r;
-    if (op === '==') return l === r;
-    if (op === 'between') return Array.isArray(r) && l >= r[0] && l <= r[1];
-    return false;
-  };
-  const cmpText = (L, op, R, opt) => {
-    const lower = !!(opt && opt.ignoreCase);
-    const toS = (x) => (x == null ? '' : String(x));
-    const norm = (x) => (lower ? toS(x).toLowerCase() : toS(x));
-    L = norm(L);
-    R = Array.isArray(R) ? R.map(norm) : norm(R);
-    if (op === 'equals' || op === '==') return L === R;
-    if (op === 'contains') return L.includes(R);
-    if (op === 'notContains') return !L.includes(R);
-    if (op === 'in') return Array.isArray(R) && R.includes(L);
-    if (op === 'notIn') return Array.isArray(R) && !R.includes(L);
-    return false;
-  };
+  // 画面用セルオブジェクト（type 付き）
+  const screenCell = (type, value) => ({ type, value });
 
-  // ルール評価（A/B/C = field_a/field_b/field_c を使う）
-  function evalRules(config, rec, log = false) {
-    const key2code = {};
-    (config.recordSchema || []).forEach((s) => (key2code[s.key] = s.fieldCode));
-
-    const read = (key, type) => {
-      const code = key2code[key];
-      const f = code && rec.record[code];
-      const v = f ? f.value : null;
-      if (type === 'number') return asNumber(v);
-      if (type === 'datetime') return asDate(v);
-      return v;
+  // 画面用の1行（サブテーブル）
+  function buildScreenRow(row) {
+    // row はプリミティブ値（画面表示用）を入れて渡す
+    return {
+      value: {
+        scan_at:      screenCell('DATETIME', row.scan_at),
+        col_prod:     screenCell('SINGLE_LINE_TEXT', row.col_prod ?? ''),
+        col_width:    screenCell('NUMBER', row.col_width == null ? null : Number(row.col_width)),
+        col_length:   screenCell('NUMBER', row.col_length == null ? null : Number(row.col_length)),
+        lot_no:       screenCell('SINGLE_LINE_TEXT', row.lot_no ?? ''),
+        label_no:     screenCell('SINGLE_LINE_TEXT', row.label_no ?? ''),
+        col_packs:    screenCell('NUMBER', row.col_packs == null ? null : Number(row.col_packs)),
+        col_rotation: screenCell('NUMBER', row.col_rotation == null ? null : Number(row.col_rotation)),
+        result:       screenCell('SINGLE_LINE_TEXT', row.result ?? ''),
+        reason:       screenCell('MULTI_LINE_TEXT', row.reason ?? '')
+      }
     };
+  }
 
-    const results = [];
-    for (const r of config.rules || []) {
-      const left = read(r.key, r.type);
-      const right =
-        r.type === 'number'
-          ? Array.isArray(r.value)
-            ? r.value.map(asNumber)
-            : asNumber(r.value)
-          : r.value;
+  // PUT用の1行（サブテーブル）
+  function buildPutRow(row) {
+    return {
+      value: {
+        scan_at:      { value: row.scan_at },
+        col_prod:     { value: row.col_prod ?? '' },
+        col_width:    { value: row.col_width == null ? null : Number(row.col_width) },
+        col_length:   { value: row.col_length == null ? null : Number(row.col_length) },
+        lot_no:       { value: row.lot_no ?? '' },
+        label_no:     { value: row.label_no ?? '' },
+        col_packs:    { value: row.col_packs == null ? null : Number(row.col_packs) },
+        col_rotation: { value: row.col_rotation == null ? null : Number(row.col_rotation) },
+        result:       { value: row.result ?? '' },
+        reason:       { value: row.reason ?? '' }
+      }
+    };
+  }
+
+  // ルール評価（A/B/C）
+  function evalRules(config, recValues) {
+    // recValues は次の形を想定： { A:'...', B:'YYYY-...', C:number }
+    const rules = config.rules || [];
+    const reasons = [];
+    let allOk = true;
+
+    for (const r of rules) {
+      const left = recValues[r.key];
+      const op = r.operator;
+      const type = r.type;
+      const right = r.value;
       let pass = false;
-      if (r.type === 'number') pass = cmpNum(left, r.operator, right);
-      else if (r.type === 'datetime') pass = cmpDate(left, r.operator, right);
-      else if (r.type === 'text') pass = cmpText(left, r.operator, right, r.options || {});
-      else results.push({ ok: false, reason: `未対応type:${r.type}` });
 
-      results.push({ ok: pass, reason: pass ? '' : `key=${r.key} op=${r.operator} val=${JSON.stringify(r.value)}` });
-      if (log) console.log('[RULE]', { key: r.key, type: r.type, op: r.operator, left, pass });
+      if (type === 'text') {
+        const ic = r.options?.ignoreCase;
+        const L = (left ?? '').toString();
+        const R = Array.isArray(right) ? right.map(String) : [String(right)];
+        const Lc = ic ? L.toLowerCase() : L;
+        const Rc = ic ? R.map((x) => x.toLowerCase()) : R;
+
+        if (op === 'notContains') pass = Rc.every((x) => !Lc.includes(x));
+        else if (op === 'contains') pass = Rc.some((x) => Lc.includes(x));
+        else if (op === 'equals' || op === '==') pass = Rc.some((x) => Lc === x);
+      } else if (type === 'number') {
+        const L = Number(left);
+        if (op === 'between') pass = L >= Number(right?.[0]) && L <= Number(right?.[1]);
+        else if (op === '>=') pass = L >= Number(right);
+        else if (op === '<=') pass = L <= Number(right);
+        else if (op === '>') pass = L > Number(right);
+        else if (op === '<') pass = L < Number(right);
+      } else if (type === 'datetime') {
+        const L = asDate(left)?.getTime();
+        const R = asDate(right)?.getTime();
+        if (L != null && R != null) {
+          if (op === 'lte') pass = L <= R;
+          else if (op === 'lt') pass = L < R;
+          else if (op === 'gte') pass = L >= R;
+          else if (op === 'gt') pass = L > R;
+        }
+      }
+
+      if (!pass) {
+        allOk = false;
+        reasons.push(`key=${r.key} op=${op} val=${JSON.stringify(right)}`);
+      }
     }
-    const allOk = results.every((x) => x.ok);
-    const reason = results.filter((x) => !x.ok).map((x) => x.reason).join(' / ');
-    return { allOk, reason };
+    return { allOk, reason: reasons.join(' / ') };
   }
 
-  // 効果音（任意設定）
-  async function play(url, vol) {
-    try {
-      if (!url) return;
-      const a = new Audio(url);
-      if (typeof vol === 'number') a.volume = Math.max(0, Math.min(1, vol));
-      await a.play();
-    } catch (e) {
-      // 無視
-    }
+  // 音声
+  const sounds = {
+    ok: new Audio('https://osone1988-hash.github.io/solomon-test/assets/sound_ok.mp3'),
+    ng: new Audio('https://osone1988-hash.github.io/solomon-test/assets/sound_error.mp3')
+  };
+
+  function playOk(vol) { try { sounds.ok.volume = vol ?? 0.4; sounds.ok.play(); } catch(e){} }
+  function playNg(vol) { try { sounds.ng.volume = vol ?? 0.4; sounds.ng.play(); } catch(e){} }
+
+  // ====== QRパース（7項目） ======
+  // 例： "mekkiCUPET0812vc 16 6000 51104 AA 2 1"
+  function parseSevenItems(raw) {
+    // 区切りは空白・タブを許容
+    const parts = (raw || '').trim().split(/\s+/);
+    // 7個より長ければ先頭7つ、短ければ不足分は空文字に
+    const [prod, width, length, lot, label, packs, rotation] = [
+      parts[0] ?? '', parts[1] ?? '', parts[2] ?? '',
+      parts[3] ?? '', parts[4] ?? '', parts[5] ?? '', parts[6] ?? ''
+    ];
+
+    return {
+      col_prod: prod,
+      col_width: asNumber(width),
+      col_length: asNumber(length),
+      lot_no: lot,
+      label_no: label,
+      col_packs: asNumber(packs),
+      col_rotation: asNumber(rotation)
+    };
   }
 
-  // SCAN UI を編集画面に挿入
+  // ====== 編集画面に SCAN UI を設置 ======
   kintone.events.on('app.record.edit.show', (event) => {
+    // 既に設置済みならスキップ
+    if (document.getElementById('tana-scan-box')) return event;
+
     const rec = event.record;
 
-    // 既に設置済みなら何もしない
-    if (document.getElementById('tana-scan-wrap')) return;
+    // 1) JSON設定読み込み（json_config -> json の順に）
+    let cfgStr = rec.json_config?.value || rec.json?.value || '';
+    let config = {};
+    try {
+      config = cfgStr ? JSON.parse(cfgStr) : {};
+    } catch (e) {
+      alert('設定JSONのパースに失敗しました。');
+      console.error(e);
+      return event;
+    }
 
-    // ヘッダ下の1カラムにシンプルなボックスを置く
-    const wrap = document.createElement('div');
-    wrap.id = 'tana-scan-wrap';
-    wrap.style.cssText =
-      'padding:10px;background:#fffbcc;border:1px solid #eedc82;border-radius:6px;margin:10px 0;display:flex;gap:8px;align-items:center;';
-    const label = document.createElement('span');
-    label.textContent = 'SCAN';
-    label.style.cssText = 'font-weight:600;margin-right:8px;';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.id = 'tana-scan-input';
-    input.placeholder = 'ここにスキャン（Enterで判定）';
-    input.style.cssText =
-      'flex:1; padding:8px 10px; border:1px solid #ccc; border-radius:6px; font-size:14px;';
-    const clr = document.createElement('button');
-    clr.textContent = 'クリア';
-    clr.style.cssText =
-      'padding:8px 10px;border:1px solid #ccc;border-radius:6px;background:#fff;cursor:pointer;';
-    wrap.appendChild(label);
-    wrap.appendChild(input);
-    wrap.appendChild(clr);
+    // 2) UI設置
+    const area = document.createElement('div');
+    area.id = 'tana-scan-box';
+    area.style.cssText = 'padding:8px;background:#fff2b3;border:1px solid #e5d17a;margin:8px 0;border-radius:6px;';
+    area.innerHTML = `
+      <label style="font-weight:600;margin-right:8px;">SCAN</label>
+      <input id="tana-scan-input" type="text" style="width:420px;padding:6px;" placeholder="ここにスキャン（Enterで判定）">
+      <button id="tana-scan-clear" style="margin-left:8px;">クリア</button>
+    `;
 
-    // kintone の上部フォームの先頭に挿入
-    const root = document.querySelector('.gaia-argoui-app-edit-toolbar ~ div') || document.body;
-    root.insertBefore(wrap, root.firstChild);
+    // 先頭のフィールドの上に差し込む（見やすい位置に）
+    const root = kintone.app.record.getSpaceElement?.('') || document.querySelector('.gaia-argoui-app-editlayout-body');
+    const target = document.querySelector('.gaia-argoui-app-editlayout-wrapper') || root || document.body;
+    target.prepend(area);
 
-    clr.onclick = () => {
-      input.value = '';
-      input.focus();
-    };
-    setTimeout(() => input.focus(), 0);
+    // ハンドラ
+    const input = document.getElementById('tana-scan-input');
+    const btnClear = document.getElementById('tana-scan-clear');
+    btnClear.onclick = () => { input.value = ''; input.focus(); };
 
-    // スキャン → 解析 → 追記 → PUT
     input.addEventListener('keydown', async (e) => {
       if (e.key !== 'Enter') return;
-      const text = (input.value || '').trim();
-      if (!text) return;
 
-      // 設定読み込み
-      let cfgStr = rec.json_config?.value || '';
-      let config = {};
-      try {
-        config = JSON.parse(cfgStr || '{}');
-      } catch (err) {
-        alert('設定JSON(json_config)のパースに失敗しました。');
-        console.error(err);
-        return;
-      }
-
-      // ルール評価
-      const { allOk, reason } = evalRules(config, { record: rec }, true);
-
-      // 7項目パース：製品名 幅 長さ ロット ラベル 梱包数 回転数
-      const parts = text.split(/\s+/);
-      if (parts.length < 7) {
-        await play(config.sounds?.ng, config.sounds?.volume ?? 0.4);
-        alert('読み取り形式エラー：必要項目(7)に不足があります。');
-        return;
-      }
-      const [prod, width, length, lot, labelCode, packs, rotation] = parts;
-
-      // サブテーブル現値
-      const tableCode = config.ui?.table?.fieldCode;
-      const cols = config.ui?.table?.columns || {};
-      const curr = (rec[tableCode]?.value || []).slice();
-
-      // 1行生成
-      const newRow = {};
-      const put = (code, value) => {
-        if (!code) return;
-        newRow[code] = { value };
-      };
-
-      put(cols.datetime, new Date().toISOString());
-      put(cols.result, allOk ? 'OK' : 'NG');
-      put(cols.reason, allOk ? '' : reason);
-
-      put(cols.A, prod);
-      put(cols.B, asNumber(width));
-      put(cols.C, asNumber(length));
-      put(cols.D, lot);
-      put(cols.E, labelCode);
-      put(cols.F, asNumber(packs));
-      put(cols.G, asNumber(rotation));
-
-      const next = curr.concat([{ value: newRow }]);
-
-      // PUT
-      const body = {
-        app: kintone.app.getId(),
-        id: kintone.app.record.getId(),
-        record: { [tableCode]: { value: next } }
-      };
+      const raw = input.value.trim();
+      if (!raw) return;
 
       try {
-        const url = kintone.api.url('/k/v1/record.json', true);
-        await kintone.api(url, 'PUT', body);
+        // 2-1) QR分解（7項目）
+        const parsed = parseSevenItems(raw);
 
-        // 画面に即時反映
-        rec[tableCode].value = next;
+        // 2-2) ルール判定のための A/B/C を、現在のレコードから取得
+        // A: field_a(text), B: field_b(datetime), C: field_c(number)
+        const A = rec.field_a?.value ?? '';
+        const B = rec.field_b?.value ?? '';
+        const C = asNumber(rec.field_c?.value);
+
+        const { allOk, reason } = evalRules(config, { A, B, C });
+
+        // 2-3) 行データ（画面表示用のプリミティブ値）
+        const screenRowData = {
+          scan_at: isoNow(),
+          ...parsed,
+          result: allOk ? (config.messages?.ok ?? 'OK') : (config.messages?.ng ?? 'NG'),
+          reason: allOk ? '' : reason
+        };
+
+        // 2-4) 画面に反映（type付き）
+        const tableCode = config.ui?.table?.fieldCode || 'scan_table';
+        const curr = rec[tableCode]?.value || [];
+        const nextScreenRows = curr.concat([ buildScreenRow(screenRowData) ]);
+        rec[tableCode].value = nextScreenRows;
         kintone.app.record.set({ record: rec });
 
-        // サウンド
-        if (allOk) await play(config.sounds?.ok, config.sounds?.volume ?? 0.4);
-        else await play(config.sounds?.ng, config.sounds?.volume ?? 0.4);
+        // 2-5) サーバにPUT（typeなし）
+        const url = kintone.api.url('/k/v1/record.json', true);
+        const putBody = {
+          app: kintone.app.getId(),
+          id: rec.$id?.value || event.recordId,
+          record: {
+            [tableCode]: {
+              value: (curr.map(r => ({ id: r.id, value: Object.fromEntries(
+                Object.keys(r.value).map(k => [k, { value: r.value[k].value }])
+              )}))).concat([ buildPutRow(screenRowData) ])
+            }
+          }
+        };
+        await kintone.api(url, 'PUT', putBody);
 
-        // 次のスキャンに備える
+        // 2-6) 音（最後に）
+        if (allOk) playOk(config.sounds?.ok?.volume ?? 0.4);
+        else playNg(config.sounds?.ng?.volume ?? 0.4);
+
+        // 次のスキャンへ
         input.value = '';
         input.focus();
 
-        if (!allOk) {
-          alert(`NG：サブテーブルに行を追加しました。\n理由：${reason}`);
-        }
       } catch (err) {
         console.error(err);
-        alert('保存時にエラーが発生しました。');
+        alert('処理中にエラーが発生しました。');
       }
     });
-  });
 
-  // （参考）詳細画面のボタンは gate.js 側に任せるのでここでは何もしない
+    // 初回フォーカス
+    input.focus();
+    return event;
+  });
 })();

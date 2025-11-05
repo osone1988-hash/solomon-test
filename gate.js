@@ -1,19 +1,13 @@
-/* gate.js unified v2 — fixed (typeを一切書かず、valueのみ更新) */
+/* gate.js unified v2 — handler内でget()禁止 & typeを一切書かない */
 (function () {
-  // 起動確認（Console で window.__TANA_GATE__ を見る用）
   window.__TANA_GATE__ = 'ok';
 
   // ---------- utils ----------
   const asNumber = (v) => (v === '' || v == null ? null : Number(v));
-  const asDate = (v) => {
-    if (!v) return null;
-    const d = new Date(v);
-    return isNaN(d.getTime()) ? null : d;
-  };
+  const asDate = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; };
   const iso = (d) => (d ? new Date(d).toISOString() : '');
   const numStrOrEmpty = (v) => (v === '' || v == null ? '' : String(v));
 
-  // number
   const cmpNum = (L, op, R) => {
     if (L == null) return false;
     if (op === '>') return L > R;
@@ -24,7 +18,6 @@
     if (op === 'between') return Array.isArray(R) && L >= R[0] && L <= R[1];
     return false;
   };
-  // datetime
   const cmpDate = (L, op, R) => {
     if (!L) return false;
     const l = L.getTime();
@@ -37,7 +30,6 @@
     if (op === 'between') return Array.isArray(r) && l >= r[0] && l <= r[1];
     return false;
   };
-  // text
   const cmpText = (L, op, R, opt) => {
     const lower = !!(opt && opt.ignoreCase);
     const toS = (x) => (x == null ? '' : String(x));
@@ -52,7 +44,6 @@
     return false;
   };
 
-  // ルール評価（recordSchema / rules 使用）
   function evalRules(config, rec, overrideMap, log = false) {
     const key2code = {};
     (config.recordSchema || []).forEach((s) => (key2code[s.key] = s.fieldCode));
@@ -100,7 +91,7 @@
     const body = {
       app: kintone.app.getId(),
       id: rec.recordId || rec.$id?.value,
-      record: { [tableCode]: { value: next } } // type は送らない
+      record: { [tableCode]: { value: next } } // typeは送らない
     };
     const url = kintone.api.url('/k/v1/record.json', true);
     const res = await kintone.api(url, 'PUT', body);
@@ -110,17 +101,15 @@
     return res;
   }
 
-  // ---------- ボタン運用（従来互換） ----------
+  // ---------- ボタン運用 ----------
   async function judgeAndAppendByButton(rec) {
     const cfgStr = rec.record.json_config?.value;
     if (!cfgStr) { alert('設定JSON(json_config)が見つかりません。'); return; }
     let config;
     try { config = JSON.parse(cfgStr); } catch (e) { alert('設定JSONのパースに失敗しました。'); console.error(e); return; }
 
-    // A/B/C は既存レコード値で評価
     const { allOk, reason } = evalRules(config, rec, null, true);
 
-    // 行を作る
     const cols = config.ui?.table?.columns || {};
     const key2code = {}; (config.recordSchema || []).forEach(s => key2code[s.key] = s.fieldCode);
     const vA = rec.record[key2code.A]?.value ?? '';
@@ -242,16 +231,18 @@
     });
   }
 
-  // ---------- 画面イベント ----------
-  kintone.events.on('app.record.detail.show', () => {
-    const rec = kintone.app.record.get();
-    const cfgStr = rec.record.json_config?.value;
-    if (!cfgStr) return; // 設定ないと何もしない
+  // ---------- 詳細画面 ----------
+  kintone.events.on('app.record.detail.show', (event) => {
+    const cfgStr = event.record.json_config?.value;
+    if (!cfgStr) return;
 
     let config = {};
     try { config = JSON.parse(cfgStr); } catch (e) { console.error('json_config parse error', e); return; }
 
-    // ボタン（互換）
+    // event 由来のラッパーを作って渡す（handler内で get() しない）
+    const rec = { record: event.record, $id: { value: event.record.$id.value } };
+
+    // ボタン
     if (!document.getElementById('tana-judge-btn')) {
       const space = kintone.app.record.getHeaderMenuSpaceElement?.() || kintone.app.getHeaderMenuSpaceElement?.();
       if (space) {

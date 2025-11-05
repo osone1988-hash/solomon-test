@@ -2,20 +2,6 @@
   // ===== ユーティリティ =====
   const byId = (id) => document.getElementById(id);
 
-  // フィールドコード -> type（app.record の type 名）対応
-  const FIELD_TYPES = {
-    scan_at:     'DATETIME',
-    col_prod:    'SINGLE_LINE_TEXT',
-    col_width:   'NUMBER',
-    col_length:  'NUMBER',
-    col_lot:     'SINGLE_LINE_TEXT',
-    col_label:   'SINGLE_LINE_TEXT',
-    col_packs:   'NUMBER',
-    col_rotation:'NUMBER',
-    result:      'SINGLE_LINE_TEXT',
-    reason:      'MULTI_LINE_TEXT',
-  };
-
   // QR -> 7項目に分解（例: "mekkiCUPET0812vc 16 6000 51104 AA 2 1"）
   function parseScan(raw) {
     if (!raw || typeof raw !== 'string') return null;
@@ -32,42 +18,34 @@
     };
   }
 
-  // サブテーブル行を app.record.set 互換の形に整形
+  // kintone NUMBER は文字列が安全
+  const numOrEmpty = (v) => (v === '' || v == null || isNaN(v) ? '' : String(v));
+  const isoNow = () => new Date().toISOString();
+
+  // サブテーブル1行の { value: { fieldCode: { value } } } を作る（typeを絶対に書かない）
   function buildRow(cols, data) {
     const row = {};
-
-    // 値セット（type を必ず付ける。NUMBER は文字列化しておくと安定）
-    const put = (code, v) => {
-      if (!code) return;
-      const t = FIELD_TYPES[code] || 'SINGLE_LINE_TEXT';
-      let value = v;
-      if (t === 'NUMBER' && v !== '' && v != null) value = String(v);
-      if (t === 'DATETIME' && v instanceof Date) value = v.toISOString();
-      row[code] = { type: t, value };
-    };
-
-    put(cols.datetime, new Date());                        // DATETIME
-    put(cols.product,  data.product_name ?? '');           // TEXT
-    put(cols.width,    isNaN(data.width) ? '' : data.width);         // NUMBER
-    put(cols.length,   isNaN(data.length) ? '' : data.length);       // NUMBER
-    put(cols.lot,      data.lot_no ?? '');                 // TEXT
-    put(cols.label,    data.label_no ?? '');               // TEXT
-    put(cols.packs,    isNaN(data.packs) ? '' : data.packs);         // NUMBER
-    put(cols.rotation, isNaN(data.rotation) ? '' : data.rotation);   // NUMBER
-    // result / reason は gate.js が後で入れるので空で作っておく
-    put(cols.result,   '');
-    put(cols.reason,   '');
-
+    row[cols.datetime] = { value: isoNow() };                 // DATETIME
+    row[cols.product]  = { value: data.product_name ?? '' };  // TEXT
+    row[cols.width]    = { value: numOrEmpty(data.width) };   // NUMBER(文字列)
+    row[cols.length]   = { value: numOrEmpty(data.length) };  // NUMBER(文字列)
+    row[cols.lot]      = { value: data.lot_no ?? '' };        // TEXT
+    row[cols.label]    = { value: data.label_no ?? '' };      // TEXT
+    row[cols.packs]    = { value: numOrEmpty(data.packs) };   // NUMBER(文字列)
+    row[cols.rotation] = { value: numOrEmpty(data.rotation) };// NUMBER(文字列)
+    // result / reason は後工程でセットする想定なので空で用意
+    row[cols.result]   = { value: '' };
+    row[cols.reason]   = { value: '' };
     return { value: row };
   }
 
   // ===== 状態 =====
-  let cached = null;
+  let cached = null;  // kintone.app.record.get() の結果をキャッシュ
   let cfg = null;
 
   // ===== 画面生成（編集画面） =====
   kintone.events.on('app.record.edit.show', (event) => {
-    // record をキャッシュ（以降は get を繰り返さない）
+    // record をキャッシュ
     cached = kintone.app.record.get();
 
     // 設定 JSON
@@ -126,12 +104,15 @@
           result: 'result', reason: 'reason',
         };
 
-        const curr = Array.isArray(rec[tableCode]?.value) ? rec[tableCode].value : [];
+        const table = rec[tableCode];
+        const curr = Array.isArray(table?.value) ? table.value : [];
         const newRow = buildRow(cols, parsed);
         curr.push(newRow);
 
-        // set には「type を含む完全構造」を渡す
-        rec[tableCode] = { type: 'SUBTABLE', value: curr };
+        // ここで type を書かない。既存の record 構造をそのまま更新して set
+        if (!rec[tableCode]) rec[tableCode] = { value: [] };
+        rec[tableCode].value = curr;
+
         kintone.app.record.set({ record: rec });
 
         input.value = '';

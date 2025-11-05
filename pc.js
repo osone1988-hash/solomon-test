@@ -1,6 +1,8 @@
 (function () {
   // ===== ユーティリティ =====
   const byId = (id) => document.getElementById(id);
+  const numOrEmpty = (v) => (v === '' || v == null || isNaN(v) ? '' : String(v));
+  const isoNow = () => new Date().toISOString();
 
   // QR -> 7項目に分解（例: "mekkiCUPET0812vc 16 6000 51104 AA 2 1"）
   function parseScan(raw) {
@@ -18,46 +20,71 @@
     };
   }
 
-  // kintone NUMBER は文字列が安全
-  const numOrEmpty = (v) => (v === '' || v == null || isNaN(v) ? '' : String(v));
-  const isoNow = () => new Date().toISOString();
-
-  // サブテーブル1行の { value: { fieldCode: { value } } } を作る（typeを絶対に書かない）
+  // サブテーブルの1行（valueのみ・typeは書かない）
   function buildRow(cols, data) {
     const row = {};
-    row[cols.datetime] = { value: isoNow() };                 // DATETIME
-    row[cols.product]  = { value: data.product_name ?? '' };  // TEXT
-    row[cols.width]    = { value: numOrEmpty(data.width) };   // NUMBER(文字列)
-    row[cols.length]   = { value: numOrEmpty(data.length) };  // NUMBER(文字列)
-    row[cols.lot]      = { value: data.lot_no ?? '' };        // TEXT
-    row[cols.label]    = { value: data.label_no ?? '' };      // TEXT
-    row[cols.packs]    = { value: numOrEmpty(data.packs) };   // NUMBER(文字列)
-    row[cols.rotation] = { value: numOrEmpty(data.rotation) };// NUMBER(文字列)
-    // result / reason は後工程でセットする想定なので空で用意
+    row[cols.datetime] = { value: isoNow() };
+    row[cols.product]  = { value: data.product_name ?? '' };
+    row[cols.width]    = { value: numOrEmpty(data.width) };
+    row[cols.length]   = { value: numOrEmpty(data.length) };
+    row[cols.lot]      = { value: data.lot_no ?? '' };
+    row[cols.label]    = { value: data.label_no ?? '' };
+    row[cols.packs]    = { value: numOrEmpty(data.packs) };
+    row[cols.rotation] = { value: numOrEmpty(data.rotation) };
     row[cols.result]   = { value: '' };
     row[cols.reason]   = { value: '' };
     return { value: row };
   }
 
+  // サブテーブルの既存セルから誤って保存された "type" を除去
+  function sanitizeSubtable(record, tableCode) {
+    const t = record[tableCode];
+    if (!t || !Array.isArray(t.value)) return;
+    for (const row of t.value) {
+      const cells = row.value || {};
+      for (const k of Object.keys(cells)) {
+        const cell = cells[k];
+        if (cell && typeof cell === 'object' && 'type' in cell) {
+          delete cell.type; // ←これが赤バナーの根本原因
+        }
+      }
+    }
+  }
+
   // ===== 状態 =====
-  let cached = null;  // kintone.app.record.get() の結果をキャッシュ
-  let cfg = null;
+  let cfg = null; // JSON設定
+  let tableCode = 'scan_table';
+  let cols = {
+    datetime: 'scan_at',
+    product:  'col_prod',
+    width:    'col_width',
+    length:   'col_length',
+    lot:      'col_lot',
+    label:    'col_label',
+    packs:    'col_packs',
+    rotation: 'col_rotation',
+    result:   'result',
+    reason:   'reason'
+  };
 
-  // ===== 画面生成（編集画面） =====
+  // ===== 編集画面 =====
   kintone.events.on('app.record.edit.show', (event) => {
-    // record をキャッシュ
-    cached = kintone.app.record.get();
-
-    // 設定 JSON
+    // 1) 設定JSON（event.recordから直接読む：ハンドラ内で get() は使わない）
     try {
-      cfg = JSON.parse(cached.record.json_config.value || '{}');
+      cfg = JSON.parse(event.record.json_config.value || '{}');
     } catch (e) {
       cfg = null;
       alert('設定JSONのパースに失敗しました。');
       return event;
     }
+    // 2) テーブル設定を適用
+    if (cfg?.ui?.table?.fieldCode) tableCode = cfg.ui.table.fieldCode;
+    if (cfg?.ui?.table?.columns) cols = { ...cols, ...cfg.ui.table.columns };
 
-    // SCAN 入力 UI（既にあれば再生成しない）
+    // 3) 既存データから誤った "type" を除去（表示時バナー対策）
+    sanitizeSubtable(event.record, tableCode);
+
+    // 4) SCAN UI（既にあれば再生成しない）
     if (!byId('tana-scan')) {
       const wrap = document.createElement('div');
       wrap.style.margin = '8px 0 16px';
@@ -96,20 +123,16 @@
           return;
         }
 
-        const rec = cached.record;
-        const tableCode = cfg?.ui?.table?.fieldCode || 'scan_table';
-        const cols = cfg?.ui?.table?.columns || {
-          datetime: 'scan_at', product: 'col_prod', width: 'col_width', length: 'col_length',
-          lot: 'col_lot', label: 'col_label', packs: 'col_packs', rotation: 'col_rotation',
-          result: 'result', reason: 'reason',
-        };
-
+        // 最新の画面値を取得（ここはハンドラ外なので get() でOK）
+        const recWrap = kintone.app.record.get();
+        const rec = recWrap.record;
         const table = rec[tableCode];
         const curr = Array.isArray(table?.value) ? table.value : [];
+
         const newRow = buildRow(cols, parsed);
         curr.push(newRow);
 
-        // ここで type を書かない。既存の record 構造をそのまま更新して set
+        // type を書かずに value だけ更新
         if (!rec[tableCode]) rec[tableCode] = { value: [] };
         rec[tableCode].value = curr;
 
@@ -120,6 +143,7 @@
       });
     }
 
+    // show ハンドラの戻り値として**サニタイズ済み event**を返す
     return event;
   });
 })();

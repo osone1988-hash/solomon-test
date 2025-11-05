@@ -1,8 +1,8 @@
 (function () {
-  // ===== util =====
+  // ---------- util ----------
   const byId = (id) => document.getElementById(id);
 
-  // QR -> 7要素分解
+  // QR -> 7項目（製品名 / 幅 / 長さ / ロット / ラベル / 梱包数 / 回転数）
   function parseScan(raw) {
     if (!raw || typeof raw !== 'string') return null;
     const t = raw.trim().replace(/\s+/g, ' ').split(' ');
@@ -18,105 +18,116 @@
     };
   }
 
-  // サブテーブル行を組み立て
+  // サブテーブル1セルを {type, value} で作る
+  const T = {
+    TEXT: (v = '') => ({ type: 'SINGLE_LINE_TEXT', value: String(v) }),
+    MULTI: (v = '') => ({ type: 'MULTI_LINE_TEXT', value: String(v) }),
+    NUM:  (v = '') => ({ type: 'NUMBER', value: (v === '' || isNaN(v)) ? null : Number(v) }),
+    DT:   (v) => ({ type: 'DATETIME', value: v ?? '' }),
+  };
+
+  // サブテーブル行を { value: { colCode: {type, value}, ... } } に整形
   function buildRow(cols, data) {
+    const nowIso = new Date().toISOString();
+
     const row = {};
-    const put = (code, v) => { if (code) row[code] = { value: v }; };
-    put(cols.datetime, new Date().toISOString());
-    put(cols.product,  data.product_name ?? '');
-    put(cols.width,    isNaN(data.width)    ? '' : Number(data.width));
-    put(cols.length,   isNaN(data.length)   ? '' : Number(data.length));
-    put(cols.lot,      data.lot_no ?? '');
-    put(cols.label,    data.label_no ?? '');
-    put(cols.packs,    isNaN(data.packs)    ? '' : Number(data.packs));
-    put(cols.rotation, isNaN(data.rotation) ? '' : Number(data.rotation));
-    put(cols.result,   '');       // gate.js が後で入れる
-    put(cols.reason,   '');
+    row[cols.datetime] = T.DT(nowIso);
+    row[cols.product]  = T.TEXT(data.product_name ?? '');
+    row[cols.width]    = T.NUM(data.width);
+    row[cols.length]   = T.NUM(data.length);
+    row[cols.lot]      = T.TEXT(data.lot_no ?? '');
+    row[cols.label]    = T.TEXT(data.label_no ?? '');
+    row[cols.packs]    = T.NUM(data.packs);
+    row[cols.rotation] = T.NUM(data.rotation);
+    // 判定結果は gate.js が書き込むので空で保持
+    row[cols.result]   = T.TEXT('');
+    row[cols.reason]   = T.MULTI('');
+
     return { value: row };
   }
 
-  // ===== state =====
-  let cached = null;
-  let cfg = null;
+  let cached = null;   // kintone.app.record.get() の結果を保持
+  let cfg = null;      // json_config
 
-  // ===== edit.show =====
   kintone.events.on('app.record.edit.show', (event) => {
+    // record を一度だけ取得（keydown 内では get() を呼ばない）
     cached = kintone.app.record.get();
 
-    // 設定JSON
+    // 設定 JSON
     try {
       cfg = JSON.parse(cached.record.json_config.value || '{}');
-    } catch (_) {
+    } catch {
       cfg = null;
       alert('設定JSONのパースに失敗しました。');
       return event;
     }
 
-    // 列コード定義（JSONに無ければ既定を使用）
-    const tableCode = cfg?.ui?.table?.fieldCode || 'scan_table';
-    const cols = cfg?.ui?.table?.columns || {
-      datetime: 'scan_at',
-      product:  'col_prod',
-      width:    'col_width',
-      length:   'col_length',
-      lot:      'col_lot',
-      label:    'col_label',
-      packs:    'col_packs',
-      rotation: 'col_rotation',
-      result:   'result',
-      reason:   'reason',
-    };
-
-    // 既存行を normalize（不足列をすべて補完）
-    const ALL = [
-      cols.datetime, cols.product, cols.width, cols.length, cols.lot,
-      cols.label, cols.packs, cols.rotation, cols.result, cols.reason
-    ];
-    const normalize = (row) => {
-      const v = row?.value || {};
-      const out = {};
-      for (const c of ALL) out[c] = { value: (v[c]?.value ?? '') };
-      return { value: out };
-    };
-
-    const rec = cached.record;
-    const exists = Array.isArray(rec[tableCode]?.value) ? rec[tableCode].value : [];
-    rec[tableCode] = { value: exists.map(normalize) };
-    kintone.app.record.set({ record: rec });   // ここで赤バナーの元を除去
-    cached = kintone.app.record.get();         // 以降も常に cached を使う
-
-    // SCAN UI（重複作成しない）
+    // SCAN 入力 UI（既にあれば作らない）
     if (!byId('tana-scan')) {
       const wrap = document.createElement('div');
       wrap.style.margin = '8px 0 16px';
+
       const label = document.createElement('span');
       label.textContent = 'SCAN';
       label.style.marginRight = '8px';
+
       const input = document.createElement('input');
       input.id = 'tana-scan';
       input.type = 'text';
       input.placeholder = 'ここにスキャン（Enterで判定）';
       input.style.cssText = 'width:420px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;';
+
       const clearBtn = document.createElement('button');
       clearBtn.textContent = 'クリア';
       clearBtn.style.cssText = 'margin-left:8px;padding:6px 12px;';
       clearBtn.onclick = () => { input.value = ''; input.focus(); };
-      wrap.appendChild(label); wrap.appendChild(input); wrap.appendChild(clearBtn);
 
-      const jsonEl = kintone.app.record.getFieldElement('json_config');
-      (jsonEl?.parentElement?.parentElement || document.body).insertBefore(wrap, jsonEl?.parentElement || null);
+      wrap.appendChild(label);
+      wrap.appendChild(input);
+      wrap.appendChild(clearBtn);
+
+      const jsonFieldEl = kintone.app.record.getFieldElement('json_config');
+      if (jsonFieldEl && jsonFieldEl.parentElement) {
+        jsonFieldEl.parentElement.parentElement.insertBefore(wrap, jsonFieldEl.parentElement);
+      } else {
+        document.body.appendChild(wrap);
+      }
 
       input.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter') return;
 
         const parsed = parseScan(input.value);
-        if (!parsed) { alert('スキャン形式が不正です。例: mekkiCUPET0812vc 16 6000 51104 AA 2 1'); return; }
+        if (!parsed) {
+          alert('スキャン形式が不正です。例: mekkiCUPET0812vc 16 6000 51104 AA 2 1');
+          return;
+        }
 
-        const r = kintone.app.record.get().record;   // 最新を取得（get はここならOK）
-        const curr = Array.isArray(r[tableCode]?.value) ? r[tableCode].value : [];
+        // 以降は cached を直接触る
+        const rec = cached.record;
+
+        const tableCode = cfg?.ui?.table?.fieldCode || 'scan_table';
+        const cols = cfg?.ui?.table?.columns || {
+          datetime: 'scan_at',
+          product:  'col_prod',
+          width:    'col_width',
+          length:   'col_length',
+          lot:      'col_lot',
+          label:    'col_label',
+          packs:    'col_packs',
+          rotation: 'col_rotation',
+          result:   'result',
+          reason:   'reason',
+        };
+
+        // 既存配列（なければ空）
+        const curr = Array.isArray(rec[tableCode]?.value) ? rec[tableCode].value : [];
+
+        // 新行を追加（type 付き）
         curr.push(buildRow(cols, parsed));
-        r[tableCode] = { value: curr };
-        kintone.app.record.set({ record: r });
+
+        // 反映
+        rec[tableCode] = { value: curr };
+        kintone.app.record.set({ record: rec });
 
         input.value = '';
         input.focus();

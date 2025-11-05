@@ -2,7 +2,7 @@
   'use strict';
 
   // ==========================
-  // 小ユーティリティ
+  // util
   // ==========================
   const asNumber = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
   const asDate = (v) => {
@@ -11,7 +11,6 @@
     return isNaN(d) ? null : d;
   };
 
-  // text 比較
   const cmpText = (L, op, R, opt) => {
     const lower = !!(opt && opt.ignoreCase);
     const toS = (x) => (x == null ? '' : String(x));
@@ -25,7 +24,6 @@
     if (op === 'notIn') return Array.isArray(R) && !R.includes(L);
     return false;
   };
-  // number 比較
   const cmpNum = (L, op, R) => {
     if (L === null) return false;
     if (op === '>') return L > R;
@@ -36,7 +34,6 @@
     if (op === 'between') return Array.isArray(R) && L >= R[0] && L <= R[1];
     return false;
   };
-  // datetime 比較
   const cmpDate = (L, op, R) => {
     if (!L) return false;
     const l = L.getTime();
@@ -50,7 +47,6 @@
     return false;
   };
 
-  // ルール評価
   function evalRules(config, rec) {
     const key2code = {};
     (config.recordSchema || []).forEach((s) => (key2code[s.key] = s.fieldCode));
@@ -82,13 +78,11 @@
   }
 
   // ==========================
-  // SCAN UI（編集画面）
+  // 編集画面 UI（SCAN）
   // ==========================
   kintone.events.on('app.record.edit.show', () => {
-    // 既に作っていたら何もしない
     if (document.getElementById('tana-scan-box')) return;
 
-    // 入力ボックス
     const wrap = document.createElement('div');
     wrap.id = 'tana-scan-box';
     wrap.style.cssText = 'margin:8px 0;padding:6px;border-radius:6px;border:1px solid #e5e7eb;background:#fffbdd;';
@@ -104,16 +98,12 @@
     clearBtn.style.marginLeft = '8px';
     wrap.append(label, input, clearBtn);
 
-    const space = kintone.app.record.getSpaceElement
-      ? kintone.app.record.getSpaceElement('') // スペース未使用ならヘッダ下に追加
-      : null;
-    (space || document.querySelector('.record-gaia') || document.body).prepend(wrap);
+    (document.querySelector('.record-gaia') || document.body).prepend(wrap);
 
     clearBtn.onclick = () => { input.value = ''; input.focus(); };
 
-    // QR -> 7項目を切り出し
+    // QR -> 7項目（あなたの会社の形式）
     const parseQR = (s) => {
-      // サンプル: "mekkiCUPET0812vc 16 6000 51104 AA 2 1"
       const a = String(s || '').trim().split(/\s+/);
       if (a.length < 7) return null;
       return {
@@ -127,69 +117,82 @@
       };
     };
 
-    // Enterで実行
+    // Enterで処理
     input.addEventListener('keydown', async (ev) => {
       if (ev.key !== 'Enter') return;
 
       const qr = parseQR(input.value);
       if (!qr) { alert('読み取り形式が不正です（7要素必要）'); return; }
 
-      // 設定JSON取得＆パース
       const rec = kintone.app.record.get();
+
+      // 設定 JSON
       let cfg;
-      try {
-        cfg = JSON.parse(rec.record.json_config.value || '{}');
-      } catch (e) {
-        alert('設定JSONのパースに失敗しました。'); return;
-      }
+      try { cfg = JSON.parse(rec.record.json_config.value || '{}'); }
+      catch { alert('設定JSONのパースに失敗しました。'); return; }
 
-      // ヘッダのフィールドにも反映（任意）
-      if (rec.record.product_name) rec.record.product_name.value = qr.product_name || '';
-      if (rec.record.width)        rec.record.width.value        = qr.width ?? '';
-      if (rec.record.length)       rec.record.length.value       = qr.length ?? '';
-      if (rec.record.lot_no)       rec.record.lot_no.value       = qr.lot_no || '';
-      if (rec.record.label_no)     rec.record.label_no.value     = qr.label_no || '';
-      if (rec.record.packs)        rec.record.packs.value        = qr.packs ?? '';
-      if (rec.record.rotation)     rec.record.rotation.value     = qr.rotation ?? '';
-
-      // ルール判定（A/B/C）
+      // ルール評価（A/B/C はヘッダの field_a/field_b/field_c）
       const { allOk, reason } = evalRules(cfg, rec);
 
-      // サブテーブル行の作成（ここが今回の型エラーの元になっていた部分）
+      // ===== サブテーブル行を作る =====
       const tableCode = cfg.ui?.table?.fieldCode || 'scan_table';
       const cols = cfg.ui?.table?.columns || {
-        datetime: 'scan_at', product: 'col_prod', width: 'col_width', length: 'col_length',
-        lot: 'col_lot', label: 'col_label', packs: 'col_packs', rotation: 'col_rotation',
-        result: 'result', reason: 'reason'
+        datetime: 'scan_at',
+        product: 'col_prod',
+        width: 'col_width',
+        length: 'col_length',
+        lot: 'col_lot',
+        label: 'col_label',
+        packs: 'col_packs',
+        rotation: 'col_rotation',
+        result: 'result',
+        reason: 'reason'
       };
 
-      // 既存配列を確実に配列で用意
-      const curr = Array.isArray(rec.record[tableCode]?.value) ? rec.record[tableCode].value : [];
+      // サブテーブルの型マップ（kintone は数値も文字列で渡す！）
+      const TYPE = {
+        [cols.datetime]: 'DATETIME',
+        [cols.product]:  'TEXT',
+        [cols.width]:    'NUMBER',
+        [cols.length]:   'NUMBER',
+        [cols.lot]:      'TEXT',
+        [cols.label]:    'TEXT',
+        [cols.packs]:    'NUMBER',
+        [cols.rotation]: 'NUMBER',
+        [cols.result]:   'TEXT',
+        [cols.reason]:   'TEXT'
+      };
 
-      // 1セル書き込みヘルパ（kintone サブテーブルは { value: { code: { value } } } 形式）
-      const put = (row, code, v) => { if (!code) return; row[code] = { value: v }; };
+      const formatForKintone = (code, v) => {
+        if (v === null || v === undefined) return '';
+        const t = TYPE[code];
+        if (t === 'NUMBER') return String(v);                   // ← ここがポイント
+        if (t === 'DATETIME') return new Date(v).toISOString(); // 例: 2025-11-05T07:00:00.000Z
+        return String(v);
+      };
+
+      const put = (row, code, v) => { if (!code) return; row[code] = { value: formatForKintone(code, v) }; };
 
       const newRowValue = {};
-      put(newRowValue, cols.datetime, new Date().toISOString());
-      put(newRowValue, cols.product,  qr.product_name || '');
-      put(newRowValue, cols.width,    qr.width ?? null);
-      put(newRowValue, cols.length,   qr.length ?? null);
-      put(newRowValue, cols.lot,      qr.lot_no || '');
-      put(newRowValue, cols.label,    qr.label_no || '');
-      put(newRowValue, cols.packs,    qr.packs ?? null);
-      put(newRowValue, cols.rotation, qr.rotation ?? null);
+      put(newRowValue, cols.datetime, new Date());
+      put(newRowValue, cols.product,  qr.product_name);
+      put(newRowValue, cols.width,    qr.width);
+      put(newRowValue, cols.length,   qr.length);
+      put(newRowValue, cols.lot,      qr.lot_no);
+      put(newRowValue, cols.label,    qr.label_no);
+      put(newRowValue, cols.packs,    qr.packs);
+      put(newRowValue, cols.rotation, qr.rotation);
       put(newRowValue, cols.result,   allOk ? 'OK' : 'NG');
       put(newRowValue, cols.reason,   allOk ? '' : reason);
 
-      // デバッグ: 送る直前の形を確認したい時
+      // デバッグ（必要なら有効化）
       // console.log('[DEBUG newRowValue]', JSON.parse(JSON.stringify(newRowValue)));
 
-      // 画面に反映（ここでは API は叩かず、edit 画面の値を書き換えるだけ）
+      const curr = Array.isArray(rec.record[tableCode]?.value) ? rec.record[tableCode].value : [];
       curr.push({ value: newRowValue });
       rec.record[tableCode] = { value: curr };
       kintone.app.record.set({ record: rec.record });
 
-      // 次のスキャンに備えて
       input.value = '';
       input.focus();
     });

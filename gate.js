@@ -1,4 +1,4 @@
-/* gate.js unified v2 — remote loader版（自動スキャン＋ボタン両対応） */
+/* gate.js unified v2 — fixed (typeを一切書かず、valueのみ更新) */
 (function () {
   // 起動確認（Console で window.__TANA_GATE__ を見る用）
   window.__TANA_GATE__ = 'ok';
@@ -11,6 +11,7 @@
     return isNaN(d.getTime()) ? null : d;
   };
   const iso = (d) => (d ? new Date(d).toISOString() : '');
+  const numStrOrEmpty = (v) => (v === '' || v == null ? '' : String(v));
 
   // number
   const cmpNum = (L, op, R) => {
@@ -91,7 +92,7 @@
     };
   }
 
-  // サブテーブルに1行追加（PUT+画面反映）
+  // サブテーブルに1行追加（PUT+画面反映）— value のみ送る
   async function appendRow(config, rec, row) {
     const tableCode = config.ui?.table?.fieldCode;
     const curr = rec.record[tableCode]?.value || [];
@@ -99,7 +100,7 @@
     const body = {
       app: kintone.app.getId(),
       id: rec.recordId || rec.$id?.value,
-      record: { [tableCode]: { value: next } }
+      record: { [tableCode]: { value: next } } // type は送らない
     };
     const url = kintone.api.url('/k/v1/record.json', true);
     const res = await kintone.api(url, 'PUT', body);
@@ -130,7 +131,7 @@
     row[cols.datetime] = { value: iso(new Date()) };
     row[cols.A] = { value: vA };
     row[cols.B] = { value: vB ? iso(vB) : '' };
-    row[cols.C] = { value: vC === '' ? '' : Number(vC) };
+    row[cols.C] = { value: vC === '' ? '' : numStrOrEmpty(vC) };
     row[cols.result] = { value: allOk ? 'OK' : 'NG' };
     row[cols.reason] = { value: allOk ? '' : reason };
 
@@ -201,7 +202,7 @@
       row[cols.datetime] = { value: iso(new Date()) };
       row[cols.A] = { value: map.A };
       row[cols.B] = { value: iso(map.B) };
-      row[cols.C] = { value: map.C === '' ? '' : Number(map.C) };
+      row[cols.C] = { value: map.C === '' ? '' : numStrOrEmpty(map.C) };
       row[cols.result] = { value: allOk ? 'OK' : 'NG' };
       row[cols.reason] = { value: allOk ? '' : reason };
 

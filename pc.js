@@ -1,14 +1,14 @@
 (function () {
-  // ====== ユーティリティ ======
+  // ===== util =====
   const byId = (id) => document.getElementById(id);
 
-  // QR -> 7項目に分解（例: "mekkiCUPET0812vc 16 6000 51104 AA 2 1"）
+  // QR -> 7要素分解
   function parseScan(raw) {
     if (!raw || typeof raw !== 'string') return null;
     const t = raw.trim().replace(/\s+/g, ' ').split(' ');
     if (t.length < 7) return null;
     return {
-      product_name: t.slice(0, t.length - 6).join(' '), // 製品名は可変長を許容
+      product_name: t.slice(0, t.length - 6).join(' '),
       width: Number(t[t.length - 6]),
       length: Number(t[t.length - 5]),
       lot_no: t[t.length - 4],
@@ -18,44 +18,74 @@
     };
   }
 
-  // サブテーブル行を kintone 形式に整形
+  // サブテーブル行を組み立て
   function buildRow(cols, data) {
     const row = {};
-    const put = (code, v) => {
-      if (!code) return;
-      row[code] = { value: v };
-    };
+    const put = (code, v) => { if (code) row[code] = { value: v }; };
     put(cols.datetime, new Date().toISOString());
-    put(cols.product, data.product_name ?? '');
-    put(cols.width, isNaN(data.width) ? '' : Number(data.width));
-    put(cols.length, isNaN(data.length) ? '' : Number(data.length));
-    put(cols.lot, data.lot_no ?? '');
-    put(cols.label, data.label_no ?? '');
-    put(cols.packs, isNaN(data.packs) ? '' : Number(data.packs));
+    put(cols.product,  data.product_name ?? '');
+    put(cols.width,    isNaN(data.width)    ? '' : Number(data.width));
+    put(cols.length,   isNaN(data.length)   ? '' : Number(data.length));
+    put(cols.lot,      data.lot_no ?? '');
+    put(cols.label,    data.label_no ?? '');
+    put(cols.packs,    isNaN(data.packs)    ? '' : Number(data.packs));
     put(cols.rotation, isNaN(data.rotation) ? '' : Number(data.rotation));
-    // result / reason は gate.js 判定が入れるので空でOK
+    put(cols.result,   '');       // gate.js が後で入れる
+    put(cols.reason,   '');
     return { value: row };
   }
 
-  // ====== 状態（edit.show で初期化） ======
-  let cached;       // {record, ...} をキャッシュ
-  let cfg = null;   // JSON設定（json_config）
+  // ===== state =====
+  let cached = null;
+  let cfg = null;
 
-  // ====== 画面生成（edit.show） ======
+  // ===== edit.show =====
   kintone.events.on('app.record.edit.show', (event) => {
-    // 1) record を一度だけ取得 → 以降は cached を触る。keydown 内で get() は呼ばない！
     cached = kintone.app.record.get();
 
-    // 2) 設定JSONの読み込み
+    // 設定JSON
     try {
       cfg = JSON.parse(cached.record.json_config.value || '{}');
-    } catch (e) {
+    } catch (_) {
       cfg = null;
       alert('設定JSONのパースに失敗しました。');
       return event;
     }
 
-    // 3) SCAN 入力欄（既にあれば再作成しない）
+    // 列コード定義（JSONに無ければ既定を使用）
+    const tableCode = cfg?.ui?.table?.fieldCode || 'scan_table';
+    const cols = cfg?.ui?.table?.columns || {
+      datetime: 'scan_at',
+      product:  'col_prod',
+      width:    'col_width',
+      length:   'col_length',
+      lot:      'col_lot',
+      label:    'col_label',
+      packs:    'col_packs',
+      rotation: 'col_rotation',
+      result:   'result',
+      reason:   'reason',
+    };
+
+    // 既存行を normalize（不足列をすべて補完）
+    const ALL = [
+      cols.datetime, cols.product, cols.width, cols.length, cols.lot,
+      cols.label, cols.packs, cols.rotation, cols.result, cols.reason
+    ];
+    const normalize = (row) => {
+      const v = row?.value || {};
+      const out = {};
+      for (const c of ALL) out[c] = { value: (v[c]?.value ?? '') };
+      return { value: out };
+    };
+
+    const rec = cached.record;
+    const exists = Array.isArray(rec[tableCode]?.value) ? rec[tableCode].value : [];
+    rec[tableCode] = { value: exists.map(normalize) };
+    kintone.app.record.set({ record: rec });   // ここで赤バナーの元を除去
+    cached = kintone.app.record.get();         // 以降も常に cached を使う
+
+    // SCAN UI（重複作成しない）
     if (!byId('tana-scan')) {
       const wrap = document.createElement('div');
       wrap.style.margin = '8px 0 16px';
@@ -71,62 +101,23 @@
       clearBtn.textContent = 'クリア';
       clearBtn.style.cssText = 'margin-left:8px;padding:6px 12px;';
       clearBtn.onclick = () => { input.value = ''; input.focus(); };
+      wrap.appendChild(label); wrap.appendChild(input); wrap.appendChild(clearBtn);
 
-      wrap.appendChild(label);
-      wrap.appendChild(input);
-      wrap.appendChild(clearBtn);
+      const jsonEl = kintone.app.record.getFieldElement('json_config');
+      (jsonEl?.parentElement?.parentElement || document.body).insertBefore(wrap, jsonEl?.parentElement || null);
 
-      // JSONテキストエリアの直前あたりに差し込む
-      const jsonFieldEl = kintone.app.record.getFieldElement('json_config');
-      if (jsonFieldEl && jsonFieldEl.parentElement) {
-        jsonFieldEl.parentElement.parentElement.insertBefore(wrap, jsonFieldEl.parentElement);
-      } else {
-        // 最悪フッターに
-        document.body.appendChild(wrap);
-      }
-
-      // 4) Enter で登録
       input.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter') return;
 
         const parsed = parseScan(input.value);
-        if (!parsed) {
-          alert('スキャン形式が不正です。例: mekkiCUPET0812vc 16 6000 51104 AA 2 1');
-          return;
-        }
+        if (!parsed) { alert('スキャン形式が不正です。例: mekkiCUPET0812vc 16 6000 51104 AA 2 1'); return; }
 
-        // ---- ここからは cached を直接更新する（get() を呼ばない） ----
-        const rec = cached.record;
+        const r = kintone.app.record.get().record;   // 最新を取得（get はここならOK）
+        const curr = Array.isArray(r[tableCode]?.value) ? r[tableCode].value : [];
+        curr.push(buildRow(cols, parsed));
+        r[tableCode] = { value: curr };
+        kintone.app.record.set({ record: r });
 
-        // サブテーブル情報
-        const tableCode = cfg?.ui?.table?.fieldCode || 'scan_table';
-        const cols = cfg?.ui?.table?.columns || {
-          datetime: 'scan_at',
-          product: 'col_prod',
-          width: 'col_width',
-          length: 'col_length',
-          lot: 'col_lot',
-          label: 'col_label',
-          packs: 'col_packs',
-          rotation: 'col_rotation',
-          result: 'result',
-          reason: 'reason',
-        };
-
-        // 現在のテーブル配列（なければ空配列）
-        const curr = Array.isArray(rec[tableCode]?.value) ? rec[tableCode].value : [];
-
-        // 1行組み立て → 末尾に追加
-        const newRow = buildRow(cols, parsed);
-        curr.push(newRow);
-
-        // レコードへ反映（正しい形で上書き）
-        rec[tableCode] = { value: curr };
-
-        // 画面へ反映（get() は使わず set() だけ）
-        kintone.app.record.set({ record: rec });
-
-        // 次スキャンに備えて
         input.value = '';
         input.focus();
       });

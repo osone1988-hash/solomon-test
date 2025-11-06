@@ -1,96 +1,106 @@
 (function () {
+  'use strict';
+
   // ===== ユーティリティ =====
   const byId = (id) => document.getElementById(id);
 
-  // フィールドコード -> type（app.record の type 名）対応
-  const FIELD_TYPES = {
-    scan_at:     'DATETIME',
-    col_prod:    'SINGLE_LINE_TEXT',
-    col_width:   'NUMBER',
-    col_length:  'NUMBER',
-    col_lot:     'SINGLE_LINE_TEXT',
-    col_label:   'SINGLE_LINE_TEXT',
-    col_packs:   'NUMBER',
-    col_rotation:'NUMBER',
-    result:      'SINGLE_LINE_TEXT',
-    reason:      'MULTI_LINE_TEXT',
+  // サブテーブル列のデフォルト対応
+  const DEFAULT_COLS = {
+    datetime: 'scan_at',
+    product: 'col_prod',
+    width: 'col_width',
+    length: 'col_length',
+    lot: 'col_lot',
+    label: 'col_label',
+    packs: 'col_packs',
+    rotation: 'col_rotation',
+    result: 'result',
+    reason: 'reason',
   };
 
-  // QR -> 7項目に分解（例: "mekkiCUPET0812vc 16 6000 51104 AA 2 1"）
+  // 型付き値ファクトリ（undefined を出さない）
+  const T = {
+    text: (v) => ({ type: 'SINGLE_LINE_TEXT', value: v == null ? '' : String(v) }),
+    mtext: (v) => ({ type: 'MULTI_LINE_TEXT', value: v == null ? '' : String(v) }),
+    num: (v) => {
+      const s = v == null ? '' : String(v).trim();
+      // 空・非数は null（kintone NUMBER は null か「数値の文字列」）
+      if (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) {
+        return { type: 'NUMBER', value: null };
+      }
+      return { type: 'NUMBER', value: s };
+    },
+    dt: (v) => {
+      if (!v) return { type: 'DATETIME', value: null };
+      const d = (v instanceof Date) ? v : new Date(v);
+      return { type: 'DATETIME', value: d.toISOString() };
+    },
+  };
+
+  // QR -> 7項目に分解（右詰め。製品名は先頭～残り全部）
   function parseScan(raw) {
-    if (!raw || typeof raw !== 'string') return null;
-    const t = raw.trim().replace(/\s+/g, ' ').split(' ');
-    if (t.length < 7) return null;
-    return {
-      product_name: t.slice(0, t.length - 6).join(' '), // 製品名は可変長
-      width:   Number(t[t.length - 6]),
-      length:  Number(t[t.length - 5]),
-      lot_no:  t[t.length - 4],
-      label_no:t[t.length - 3],
-      packs:   Number(t[t.length - 2]),
-      rotation:Number(t[t.length - 1]),
-    };
+    const s = (raw || '').trim();
+    if (!s) return null;
+    const a = s.split(/\s+/);
+    if (a.length < 7) return null;
+
+    const rotation = a.pop();
+    const packs = a.pop();
+    const label_no = a.pop();
+    const lot_no = a.pop();
+    const length = a.pop();
+    const width = a.pop();
+    const product_name = a.join(' ');
+
+    return { product_name, width, length, lot_no, label_no, packs, rotation };
   }
 
-  // サブテーブル行を app.record.set 互換の形に整形
+  // サブテーブル行（type/value 完備・undefined を出さない）
   function buildRow(cols, data) {
-    const row = {};
+    const v = {};
+    v[cols.datetime] = T.dt(new Date());
+    v[cols.product] = T.text(data.product_name);
+    v[cols.width] = T.num(data.width);
+    v[cols.length] = T.num(data.length);
+    v[cols.lot] = T.text(data.lot_no);
+    v[cols.label] = T.text(data.label_no);
+    v[cols.packs] = T.num(data.packs);
+    v[cols.rotation] = T.num(data.rotation);
+    // 判定は別処理想定なので空で作成
+    v[cols.result] = T.text('');
+    v[cols.reason] = T.mtext('');
 
-    // 値セット（type を必ず付ける。NUMBER は文字列化しておくと安定）
-    const put = (code, v) => {
-      if (!code) return;
-      const t = FIELD_TYPES[code] || 'SINGLE_LINE_TEXT';
-      let value = v;
-      if (t === 'NUMBER' && v !== '' && v != null) value = String(v);
-      if (t === 'DATETIME' && v instanceof Date) value = v.toISOString();
-      row[code] = { type: t, value };
-    };
-
-    put(cols.datetime, new Date());                        // DATETIME
-    put(cols.product,  data.product_name ?? '');           // TEXT
-    put(cols.width,    isNaN(data.width) ? '' : data.width);         // NUMBER
-    put(cols.length,   isNaN(data.length) ? '' : data.length);       // NUMBER
-    put(cols.lot,      data.lot_no ?? '');                 // TEXT
-    put(cols.label,    data.label_no ?? '');               // TEXT
-    put(cols.packs,    isNaN(data.packs) ? '' : data.packs);         // NUMBER
-    put(cols.rotation, isNaN(data.rotation) ? '' : data.rotation);   // NUMBER
-    // result / reason は gate.js が後で入れるので空で作っておく
-    put(cols.result,   '');
-    put(cols.reason,   '');
-
-    return { value: row };
+    return { value: v };
   }
-
-  // ===== 状態 =====
-  let cached = null;
-  let cfg = null;
 
   // ===== 画面生成（編集画面） =====
   kintone.events.on('app.record.edit.show', (event) => {
-    // record をキャッシュ（以降は get を繰り返さない）
-    cached = kintone.app.record.get();
+    const r = event.record;
 
     // 設定 JSON
+    let cfg = {};
     try {
-      cfg = JSON.parse(cached.record.json_config.value || '{}');
+      cfg = JSON.parse((r.json_config && r.json_config.value) || '{}');
     } catch (e) {
-      cfg = null;
-      alert('設定JSONのパースに失敗しました。');
-      return event;
+      alert('設定JSONのパースに失敗しました。json_config を確認してください。');
+      return event; // return true は使わない
     }
 
-    // SCAN 入力 UI（既にあれば再生成しない）
+    // SCAN 入力 UI（重複生成しない）
     if (!byId('tana-scan')) {
       const wrap = document.createElement('div');
       wrap.style.margin = '8px 0 16px';
+
       const label = document.createElement('span');
       label.textContent = 'SCAN';
       label.style.marginRight = '8px';
+
       const input = document.createElement('input');
       input.id = 'tana-scan';
       input.type = 'text';
-      input.placeholder = 'ここにスキャン（Enterで判定）';
+      input.placeholder = 'ここにスキャン（Enterで追加）';
       input.style.cssText = 'width:420px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;';
+
       const clearBtn = document.createElement('button');
       clearBtn.textContent = 'クリア';
       clearBtn.style.cssText = 'margin-left:8px;padding:6px 12px;';
@@ -108,9 +118,10 @@
         document.body.appendChild(wrap);
       }
 
-      // Enter で 1 行追加
+      // Enter でサブテーブルへ 1 行追加
       input.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter') return;
+        ev.preventDefault();
 
         const parsed = parseScan(input.value);
         if (!parsed) {
@@ -118,21 +129,16 @@
           return;
         }
 
-        const rec = cached.record;
-        const tableCode = cfg?.ui?.table?.fieldCode || 'scan_table';
-        const cols = cfg?.ui?.table?.columns || {
-          datetime: 'scan_at', product: 'col_prod', width: 'col_width', length: 'col_length',
-          lot: 'col_lot', label: 'col_label', packs: 'col_packs', rotation: 'col_rotation',
-          result: 'result', reason: 'reason',
-        };
+        const tableCode = (cfg && cfg.ui && cfg.ui.table && cfg.ui.table.fieldCode) || 'scan_table';
+        const cols = (cfg && cfg.ui && cfg.ui.table && cfg.ui.table.columns) || DEFAULT_COLS;
 
-        const curr = Array.isArray(rec[tableCode]?.value) ? rec[tableCode].value : [];
-        const newRow = buildRow(cols, parsed);
-        curr.push(newRow);
+        if (!r[tableCode]) r[tableCode] = { type: 'SUBTABLE', value: [] };
+        if (!Array.isArray(r[tableCode].value)) r[tableCode].value = [];
 
-        // set には「type を含む完全構造」を渡す
-        rec[tableCode] = { type: 'SUBTABLE', value: curr };
-        kintone.app.record.set({ record: rec });
+        r[tableCode].value.push(buildRow(cols, parsed));
+
+        // set は { record: ... } で呼ぶ
+        kintone.app.record.set({ record: r });
 
         input.value = '';
         input.focus();

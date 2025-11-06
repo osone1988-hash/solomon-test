@@ -1,7 +1,7 @@
 (function () {
   'use strict';
 
-  const PCJS_VERSION = 'pc-2025-11-06-07';
+  const PCJS_VERSION = 'pc-2025-11-06-08';
   console.log('[TANA-OROSHI] pc.js loaded:', PCJS_VERSION);
   try { window.__TANA_PC_VERSION = PCJS_VERSION; } catch (_) {}
 
@@ -20,7 +20,7 @@
   };
   const byId = (id) => document.getElementById(id);
 
-  // 直近の列/テーブルを保持（set() フック用のフォールバック）
+  // 直近の列/テーブルを保持（set() フックのフォールバック用）
   let ACTIVE_COLS = { ...DEFAULT_COLS };
   let ACTIVE_TABLE = 'scan_table';
 
@@ -94,7 +94,7 @@
       try {
         const rec = payload && payload.record;
         if (rec) {
-          // 設定JSON → 列/テーブル（payload 内に無ければ直近 or デフォルトで）
+          // 設定JSON → 列/テーブル（payload 内に無ければ直近 or デフォルト）
           let cfg = {};
           try { cfg = JSON.parse(rec?.json_config?.value || '{}'); } catch (_) {}
           const cols = Object.keys(cfg).length ? getCols(cfg) : ACTIVE_COLS;
@@ -131,7 +131,7 @@
     row[cols.label]     = T.text(data.label_no);
     row[cols.packs]     = T.num(data.packs);
     row[cols.rotation]  = T.num(data.rotation);
-    row[cols.result]    = T.text('');     // 判定は詳細側で付与
+    row[cols.result]    = T.text('');     // 判定は詳細側で付与する想定
     row[cols.reason]    = T.mtext('');
     return { value: row };
   }
@@ -156,10 +156,19 @@
     const tableCode = getTableCode(cfg);
     ACTIVE_COLS = cols; ACTIVE_TABLE = tableCode; // set() フック用
 
-    // 初回：既存行をサニタイズ（画面上の赤バナーを消す）
-    if (r[tableCode]?.value) sanitizeSubtable(r, tableCode, cols);
+    // 初回：既存行をサニタイズ（描画後に1回 set）
+    setTimeout(() => {
+      try {
+        const cur = kintone.app.record.get();
+        if (!cur) return;
+        const cfg2 = getCfg(cur.record);
+        const cols2 = getCols(cfg2);
+        const table2 = getTableCode(cfg2);
+        sanitizeSubtable(cur.record, table2, cols2);
+        kintone.app.record.set({ record: cur.record });
+      } catch (e) { console.warn('[TANA-OROSHI] initial sanitize failed:', e); }
+    }, 0);
 
-    // SCAN UI 再生成
     removeOldScanUI();
     if (!byId('tana-scan')) {
       const wrap = document.createElement('div');
@@ -192,7 +201,7 @@
         document.body.appendChild(wrap);
       }
 
-      // ドキュメント捕捉（他ハンドラを遮断）
+      // ドキュメント捕捉（他ハンドラの keydown を遮断）
       document.addEventListener('keydown', (ev) => {
         if (ev.target === input && ev.key === 'Enter') {
           ev.stopPropagation();
@@ -211,9 +220,22 @@
         if (!r[tableCode]) r[tableCode] = { type: 'SUBTABLE', value: [] };
         if (!Array.isArray(r[tableCode].value)) r[tableCode].value = [];
 
-        // 新規行を push → set() フックで最終サニタイズ
+        // 先に正しい行を push → set() フックで一度サニタイズ
         r[tableCode].value.push(buildRow(cols, parsed));
         kintone.app.record.set({ record: r });
+
+        // ---- 重要：同期チェーンが一段落した後に “最終サニタイズ” をもう一度 ----
+        setTimeout(() => {
+          try {
+            const cur = kintone.app.record.get();        // ここはイベント外なので安全
+            if (!cur) return;
+            const cfg2 = getCfg(cur.record);
+            const cols2 = getCols(cfg2);
+            const table2 = getTableCode(cfg2);
+            sanitizeSubtable(cur.record, table2, cols2); // undefined を最終的に空/Nullへ矯正
+            kintone.app.record.set({ record: cur.record });
+          } catch (e) { console.warn('[TANA-OROSHI] post-fix sanitize failed:', e); }
+        }, 0);
 
         input.value = ''; input.focus();
       }, { capture: true });

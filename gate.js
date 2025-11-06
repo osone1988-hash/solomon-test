@@ -1,11 +1,12 @@
-/* gate.js — TANA-OROSHI fixed v=gate-2025-11-06-02 */
+/* gate.js — TANA-OROSHI fixed v=gate-2025-11-06-03 */
 (function () {
   'use strict';
 
-  const GATE_VERSION = 'gate-2025-11-06-02';
+  const GATE_VERSION = 'gate-2025-11-06-03';
   console.log('[TANA-OROSHI] gate.js loaded:', GATE_VERSION);
   window.__TANA_GATE_VERSION = GATE_VERSION;
 
+  // --- デフォ列・ヘルパ ---
   const DEFAULT_COLS = {
     datetime: 'scan_at',
     product: 'col_prod',
@@ -18,7 +19,7 @@
     result: 'result',
     reason: 'reason',
   };
-  const mergeCols = (cfg) => Object.assign({}, DEFAULT_COLS, (cfg?.ui?.table?.columns || {}));
+  const mergeCols   = (cfg) => Object.assign({}, DEFAULT_COLS, (cfg?.ui?.table?.columns || {}));
   const tableCodeOf = (cfg) => cfg?.ui?.table?.fieldCode || 'scan_table';
 
   const T = {
@@ -36,91 +37,12 @@
     },
   };
 
-  // to API format (no type)
-  function toApiRowsTyped(rowsTyped) {
-    return rowsTyped.map((row) => {
-      const api = { value: {} };
-      if (row.id) api.id = row.id;
-      Object.entries(row.value || {}).forEach(([code, cell]) => {
-        let v = cell ? cell.value : null;
-        if (cell && cell.type === 'NUMBER') {
-          v = (v === '' || v == null) ? null : Number(v);
-        } else if (cell && cell.type === 'DATETIME') {
-          v = v || null;
-        } else {
-          v = v == null ? '' : v;
-        }
-        api.value[code] = { value: v };
-      });
-      return api;
-    });
-  }
-
-  function sanitizeSubtable(record, tableCode, cols) {
-    if (!record[tableCode]) return;
-    const TYPE_MAP = {
-      [cols.datetime]: 'DATETIME',
-      [cols.product]: 'SINGLE_LINE_TEXT',
-      [cols.width]: 'NUMBER',
-      [cols.length]: 'NUMBER',
-      [cols.lot]: 'SINGLE_LINE_TEXT',
-      [cols.label]: 'SINGLE_LINE_TEXT',
-      [cols.packs]: 'NUMBER',
-      [cols.rotation]: 'NUMBER',
-      [cols.result]: 'SINGLE_LINE_TEXT',
-      [cols.reason]: 'MULTI_LINE_TEXT',
-    };
-    const rows = Array.isArray(record[tableCode].value) ? record[tableCode].value : [];
-    rows.forEach((row) => {
-      if (!row.value) row.value = {};
-      const cells = row.value;
-
-      // remove wrong keys
-      Object.keys(cells).forEach((k) => {
-        if (k === 'undefined' || k === 'null' || k === 'NaN') delete cells[k];
-      });
-
-      Object.keys(TYPE_MAP).forEach((code) => {
-        if (!cells[code]) {
-          const t = TYPE_MAP[code];
-          cells[code] =
-            t === 'NUMBER' ? { type: t, value: null } :
-            t === 'DATETIME' ? { type: t, value: null } :
-            { type: t, value: '' };
-        }
-      });
-
-      Object.entries(cells).forEach(([code, cell]) => {
-        const t = TYPE_MAP[code] || cell.type;
-        let v = cell ? cell.value : undefined;
-        if (t === 'NUMBER') {
-          const s = v == null ? '' : String(v).trim();
-          v = (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) ? null : s;
-          cells[code] = { type: 'NUMBER', value: v };
-        } else if (t === 'DATETIME') {
-          v = v ? new Date(v).toISOString() : null;
-          cells[code] = { type: 'DATETIME', value: v };
-        } else if (t === 'MULTI_LINE_TEXT' || t === 'SINGLE_LINE_TEXT') {
-          v = v == null ? '' : String(v);
-          cells[code] = { type: t, value: v };
-        } else {
-          v = v == null ? '' : String(v);
-          cells[code] = { type: t, value: v };
-        }
-      });
-    });
-  }
-
-  // ルール判定（A=raw, B=Now, C=rawから最初の整数）— 既存 gate.js と互換
+  // --- ルール判定（A=raw, B=Now, C=rawから最初の整数） ---
   const asNumber = (v) => (v === '' || v == null ? null : Number(v));
   const asDate   = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; };
-  const iso      = (d) => (d ? new Date(d).toISOString() : '');
   const cmpNum = (L, op, R) => (L == null ? false :
-    op === '>' ? L > R :
-    op === '>=' ? L >= R :
-    op === '<' ? L < R :
-    op === '<=' ? L <= R :
-    op === '==' ? L === R :
+    op === '>' ? L > R : op === '>=' ? L >= R : op === '<' ? L < R :
+    op === '<=' ? L <= R : op === '==' ? L === R :
     op === 'between' ? Array.isArray(R) && L >= R[0] && L <= R[1] : false);
   const cmpDate = (L, op, R) => {
     if (!L) return false;
@@ -134,8 +56,7 @@
     const lower = !!(opt && opt.ignoreCase);
     const toS = (x) => (x == null ? '' : String(x));
     const norm = (x) => (lower ? toS(x).toLowerCase() : toS(x));
-    L = norm(L);
-    R = Array.isArray(R) ? R.map(norm) : norm(R);
+    L = norm(L); R = Array.isArray(R) ? R.map(norm) : norm(R);
     return (op === 'equals' || op === '==') ? L === R :
            op === 'contains' ? L.includes(R) :
            op === 'notContains' ? !L.includes(R) :
@@ -171,10 +92,64 @@
       else if (r.type === 'text') ok = cmpText(L, op, R, r.options || {});
       results.push({ ok, reason: ok ? '' : `key=${r.key} op=${op} val=${JSON.stringify(r.value)}` });
     }
-    return {
-      allOk: results.every((x) => x.ok),
-      reason: results.filter((x) => !x.ok).map((x) => x.reason).join(' / ')
+    return { allOk: results.every((x) => x.ok), reason: results.filter((x) => !x.ok).map((x) => x.reason).join(' / ') };
+  }
+
+  // --- 画面反映：valueのみでPUT → 型付きでset（undefined禁止） ---
+  function sanitizeSubtable(record, tableCode, cols) {
+    if (!record[tableCode]) return;
+    const TYPE_MAP = {
+      [cols.datetime]: 'DATETIME',
+      [cols.product]: 'SINGLE_LINE_TEXT',
+      [cols.width]: 'NUMBER',
+      [cols.length]: 'NUMBER',
+      [cols.lot]: 'SINGLE_LINE_TEXT',
+      [cols.label]: 'SINGLE_LINE_TEXT',
+      [cols.packs]: 'NUMBER',
+      [cols.rotation]: 'NUMBER',
+      [cols.result]: 'SINGLE_LINE_TEXT',
+      [cols.reason]: 'MULTI_LINE_TEXT',
     };
+    const rows = Array.isArray(record[tableCode].value) ? record[tableCode].value : [];
+    rows.forEach((row) => {
+      row.value ||= {};
+      const c = row.value;
+      Object.keys(c).forEach((k)=>{ if(['undefined','null','NaN'].includes(k)) delete c[k]; });
+      Object.keys(TYPE_MAP).forEach((code) => {
+        if (!c[code]) {
+          const t = TYPE_MAP[code];
+          c[code] = (t === 'NUMBER' || t === 'DATETIME')
+            ? { type: t, value: null }
+            : { type: t, value: '' };
+        }
+      });
+      Object.entries(c).forEach(([code, cell]) => {
+        const t = TYPE_MAP[code] || cell?.type;
+        let v = cell?.value;
+        if (t === 'NUMBER') {
+          const s = v == null ? '' : String(v).trim();
+          c[code] = { type: 'NUMBER', value: (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) ? null : s };
+        } else if (t === 'DATETIME') {
+          c[code] = { type: 'DATETIME', value: v ? new Date(v).toISOString() : null };
+        } else {
+          c[code] = { type: t, value: v == null ? '' : String(v) };
+        }
+      });
+    });
+  }
+  function toApiRowsTyped(rowsTyped) {
+    return rowsTyped.map((row) => {
+      const api = { value: {} };
+      if (row.id) api.id = row.id;
+      Object.entries(row.value || {}).forEach(([code, cell]) => {
+        let v = cell ? cell.value : null;
+        if (cell && cell.type === 'NUMBER') v = (v === '' || v == null) ? null : Number(v);
+        else if (cell && cell.type === 'DATETIME') v = v || null;
+        else v = v == null ? '' : v;
+        api.value[code] = { value: v };
+      });
+      return api;
+    });
   }
 
   async function appendRowTyped(config, rec, rowUi, cols, tableCode) {
@@ -182,26 +157,28 @@
     if (!Array.isArray(rec.record[tableCode].value)) rec.record[tableCode].value = [];
 
     sanitizeSubtable(rec.record, tableCode, cols);
-
     const nextTyped = rec.record[tableCode].value.concat([{ value: rowUi }]);
 
     const apiValue = toApiRowsTyped(nextTyped);
     const url = kintone.api.url('/k/v1/record.json', true);
-    const body = {
-      app: kintone.app.getId(),
-      id: rec.$id?.value || rec.record.$id?.value,
-      record: { [tableCode]: { value: apiValue } }
-    };
+    const body = { app: kintone.app.getId(), id: rec.$id?.value || rec.record.$id?.value, record: { [tableCode]: { value: apiValue } } };
     await kintone.api(url, 'PUT', body);
 
     rec.record[tableCode].value = nextTyped;
     kintone.app.record.set({ record: rec.record });
   }
 
+  // --- ヘッダー領域の取得（イベント終了後に呼ぶ） ---
+  function getHeaderSpaceSafely() {
+    try { const el = kintone.app.getHeaderMenuSpaceElement(); if (el) return el; } catch (e) {}
+    try { const el = kintone.app.record.getHeaderMenuSpaceElement(); if (el) return el; } catch (e) {}
+    return null;
+  }
+
   function mountAutoScan(config, rec) {
     if (document.getElementById('tana-scan-panel')) return;
 
-    const space = kintone.app.record.getHeaderMenuSpaceElement?.() || kintone.app.getHeaderMenuSpaceElement?.();
+    const space = getHeaderSpaceSafely();
     if (!space) return;
 
     const wrap = document.createElement('div');
@@ -222,9 +199,8 @@
 
     const okA = document.getElementById('tana-ok-audio');
     const ngA = document.getElementById('tana-ng-audio');
-
-    try { okA.src = config.sounds?.ok || ''; } catch (_) {}
-    try { ngA.src = config.sounds?.ng || ''; } catch (_) {}
+    try { okA.src = (config.sounds && config.sounds.ok) || ''; } catch (e) {}
+    try { ngA.src = (config.sounds && config.sounds.ng) || ''; } catch (e) {}
 
     const $input = document.getElementById('tana-input');
     const $badge = document.getElementById('tana-badge');
@@ -247,8 +223,8 @@
 
       const rowUi = {};
       rowUi[cols.datetime]  = T.dt(new Date());
-      // ここは実スキーマ列に書く（A/B/C ではない）
-      rowUi[cols.product]   = T.text(''); // 詳細側は製品分解をしない
+      // 詳細画面側では製品分解はしない（空で記録）
+      rowUi[cols.product]   = T.text('');
       rowUi[cols.width]     = T.num('');
       rowUi[cols.length]    = T.num('');
       rowUi[cols.lot]       = T.text('');
@@ -260,19 +236,10 @@
 
       try {
         await appendRowTyped(config, rec, rowUi, cols, tableCode);
-        if (allOk) {
-          $badge.style.background = '#d1fae5'; $badge.textContent = 'OK';
-          try { okA.currentTime = 0; okA.play(); } catch (_) {}
-          $msg.textContent = 'OKで記録しました。';
-        } else {
-          $badge.style.background = '#fee2e2'; $badge.textContent = 'NG';
-          try { ngA.currentTime = 0; ngA.play(); } catch (_) {}
-          $msg.textContent = `NG：${reason}`;
-        }
+        if (allOk) { $badge.style.background = '#d1fae5'; $badge.textContent = 'OK'; try { okA.currentTime = 0; okA.play(); } catch (_) {} $msg.textContent = 'OKで記録しました。'; }
+        else       { $badge.style.background = '#fee2e2'; $badge.textContent = 'NG'; try { ngA.currentTime = 0; ngA.play(); } catch (_) {} $msg.textContent = `NG：${reason}`; }
       } catch (e) {
-        console.error(e);
-        $badge.style.background = '#fde68a'; $badge.textContent = 'ERR';
-        $msg.textContent = '保存時にエラーが発生しました。';
+        console.error(e); $badge.style.background = '#fde68a'; $badge.textContent = 'ERR'; $msg.textContent = '保存時にエラーが発生しました。';
       }
 
       focusInput();
@@ -281,16 +248,23 @@
     focusInput();
   }
 
+  // --- 詳細画面：イベント中はUI作らない（setTimeoutで脱出） ---
   kintone.events.on('app.record.detail.show', (event) => {
     const cfgStr = event.record.json_config?.value;
-    if (!cfgStr) return;
+    if (!cfgStr) return event;
 
     let config = {};
     try { config = JSON.parse(cfgStr); }
-    catch (e) { console.error('json_config parse error', e); return; }
+    catch (e) { console.error('json_config parse error', e); return event; }
 
+    // handler 内では kintone.app.record.get() 系を呼ばない
     const rec = { record: event.record, $id: { value: event.record.$id.value } };
-    mountAutoScan(config, rec);
+
+    // イベント終了後に UI 設置
+    setTimeout(() => {
+      try { mountAutoScan(config, rec); } catch (e) { console.error(e); }
+    }, 0);
+
     return event;
   });
 })();

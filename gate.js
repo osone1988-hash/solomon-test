@@ -1,12 +1,12 @@
-/* gate.js — TANA-OROSHI fixed v=gate-2025-11-06-03 */
+/* gate.js — TANA-OROSHI fixed v=gate-2025-11-06-04 */
 (function () {
   'use strict';
 
-  const GATE_VERSION = 'gate-2025-11-06-03';
+  const GATE_VERSION = 'gate-2025-11-06-04';
   console.log('[TANA-OROSHI] gate.js loaded:', GATE_VERSION);
-  window.__TANA_GATE_VERSION = GATE_VERSION;
+  try { window.__TANA_GATE_VERSION = GATE_VERSION; window.top.__TANA_GATE_VERSION = GATE_VERSION; } catch (_) {}
 
-  // --- デフォ列・ヘルパ ---
+  // ===== デフォ列とヘルパ =====
   const DEFAULT_COLS = {
     datetime: 'scan_at',
     product: 'col_prod',
@@ -37,7 +37,7 @@
     },
   };
 
-  // --- ルール判定（A=raw, B=Now, C=rawから最初の整数） ---
+  // ===== ルール（A=raw, B=Now, C=rawの最初の整数） =====
   const asNumber = (v) => (v === '' || v == null ? null : Number(v));
   const asDate   = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; };
   const cmpNum = (L, op, R) => (L == null ? false :
@@ -95,20 +95,13 @@
     return { allOk: results.every((x) => x.ok), reason: results.filter((x) => !x.ok).map((x) => x.reason).join(' / ') };
   }
 
-  // --- 画面反映：valueのみでPUT → 型付きでset（undefined禁止） ---
+  // ===== サブテーブル正規化（undefined排除）& API変換 =====
   function sanitizeSubtable(record, tableCode, cols) {
     if (!record[tableCode]) return;
     const TYPE_MAP = {
-      [cols.datetime]: 'DATETIME',
-      [cols.product]: 'SINGLE_LINE_TEXT',
-      [cols.width]: 'NUMBER',
-      [cols.length]: 'NUMBER',
-      [cols.lot]: 'SINGLE_LINE_TEXT',
-      [cols.label]: 'SINGLE_LINE_TEXT',
-      [cols.packs]: 'NUMBER',
-      [cols.rotation]: 'NUMBER',
-      [cols.result]: 'SINGLE_LINE_TEXT',
-      [cols.reason]: 'MULTI_LINE_TEXT',
+      [cols.datetime]:'DATETIME',[cols.product]:'SINGLE_LINE_TEXT',[cols.width]:'NUMBER',[cols.length]:'NUMBER',
+      [cols.lot]:'SINGLE_LINE_TEXT',[cols.label]:'SINGLE_LINE_TEXT',[cols.packs]:'NUMBER',[cols.rotation]:'NUMBER',
+      [cols.result]:'SINGLE_LINE_TEXT',[cols.reason]:'MULTI_LINE_TEXT',
     };
     const rows = Array.isArray(record[tableCode].value) ? record[tableCode].value : [];
     rows.forEach((row) => {
@@ -118,27 +111,19 @@
       Object.keys(TYPE_MAP).forEach((code) => {
         if (!c[code]) {
           const t = TYPE_MAP[code];
-          c[code] = (t === 'NUMBER' || t === 'DATETIME')
-            ? { type: t, value: null }
-            : { type: t, value: '' };
+          c[code] = (t === 'NUMBER' || t === 'DATETIME') ? { type: t, value: null } : { type: t, value: '' };
         }
       });
       Object.entries(c).forEach(([code, cell]) => {
-        const t = TYPE_MAP[code] || cell?.type;
-        let v = cell?.value;
-        if (t === 'NUMBER') {
-          const s = v == null ? '' : String(v).trim();
-          c[code] = { type: 'NUMBER', value: (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) ? null : s };
-        } else if (t === 'DATETIME') {
-          c[code] = { type: 'DATETIME', value: v ? new Date(v).toISOString() : null };
-        } else {
-          c[code] = { type: t, value: v == null ? '' : String(v) };
-        }
+        const t = TYPE_MAP[code] || cell?.type; let v = cell?.value;
+        if (t === 'NUMBER') { const s = v == null ? '' : String(v).trim(); c[code] = { type: 'NUMBER', value: (s===''||!/^-?\d+(\.\d+)?$/.test(s))? null : s }; }
+        else if (t === 'DATETIME') { c[code] = { type: 'DATETIME', value: v ? new Date(v).toISOString() : null }; }
+        else { c[code] = { type: t, value: v == null ? '' : String(v) }; }
       });
     });
   }
-  function toApiRowsTyped(rowsTyped) {
-    return rowsTyped.map((row) => {
+  function toApiRowsTyped(rows) {
+    return rows.map((row) => {
       const api = { value: {} };
       if (row.id) api.id = row.id;
       Object.entries(row.value || {}).forEach(([code, cell]) => {
@@ -152,118 +137,99 @@
     });
   }
 
-  async function appendRowTyped(config, rec, rowUi, cols, tableCode) {
-    if (!rec.record[tableCode]) rec.record[tableCode] = { type: 'SUBTABLE', value: [] };
-    if (!Array.isArray(rec.record[tableCode].value)) rec.record[tableCode].value = [];
-
-    sanitizeSubtable(rec.record, tableCode, cols);
-    const nextTyped = rec.record[tableCode].value.concat([{ value: rowUi }]);
-
-    const apiValue = toApiRowsTyped(nextTyped);
-    const url = kintone.api.url('/k/v1/record.json', true);
-    const body = { app: kintone.app.getId(), id: rec.$id?.value || rec.record.$id?.value, record: { [tableCode]: { value: apiValue } } };
-    await kintone.api(url, 'PUT', body);
-
-    rec.record[tableCode].value = nextTyped;
-    kintone.app.record.set({ record: rec.record });
-  }
-
-  // --- ヘッダー領域の取得（イベント終了後に呼ぶ） ---
-  function getHeaderSpaceSafely() {
-    try { const el = kintone.app.getHeaderMenuSpaceElement(); if (el) return el; } catch (e) {}
-    try { const el = kintone.app.record.getHeaderMenuSpaceElement(); if (el) return el; } catch (e) {}
-    return null;
-  }
-
-  function mountAutoScan(config, rec) {
+  // ===== フローティングUI（イベント外で呼ぶ） =====
+  function mountPanel(config, rec) {
     if (document.getElementById('tana-scan-panel')) return;
-
-    const space = getHeaderSpaceSafely();
-    if (!space) return;
 
     const wrap = document.createElement('div');
     wrap.id = 'tana-scan-panel';
-    wrap.style.cssText = 'padding:12px;margin:8px 0;border:1px solid #e5e7eb;border-radius:10px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,0.06);';
+    wrap.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:9999;padding:12px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.08);';
     wrap.innerHTML = `
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <div style="display:flex;gap:8px;align-items:center;">
         <div style="font-weight:600;">SCAN</div>
-        <input id="tana-input" autocomplete="off" placeholder="ここにQRを入力→Enter"
-               style="flex:1;min-width:280px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px" />
+        <input id="tana-input" autocomplete="off" placeholder="ここにQR→Enter"
+               style="width:320px;padding:8px 10px;border:1px solid #cbd5e1;border-radius:8px;" />
         <span id="tana-badge" style="padding:6px 10px;border-radius:999px;background:#e5e7eb;color:#111;font-weight:600;">READY</span>
       </div>
-      <div id="tana-msg" style="margin-top:8px;color:#64748b;font-size:13px;">Enterで即判定し、サブテーブルへ追記します。</div>
-      <audio id="tana-ok-audio"></audio>
-      <audio id="tana-ng-audio"></audio>
+      <div id="tana-msg" style="margin-top:6px;color:#64748b;font-size:12px;">Enterで即判定しサブテーブルへ追記します。</div>
+      <audio id="tana-ok-audio"></audio><audio id="tana-ng-audio"></audio>
     `;
-    space.appendChild(wrap);
+    document.body.appendChild(wrap);
 
     const okA = document.getElementById('tana-ok-audio');
     const ngA = document.getElementById('tana-ng-audio');
-    try { okA.src = (config.sounds && config.sounds.ok) || ''; } catch (e) {}
-    try { ngA.src = (config.sounds && config.sounds.ng) || ''; } catch (e) {}
+    try { okA.src = (config.sounds && config.sounds.ok) || ''; } catch (_) {}
+    try { ngA.src = (config.sounds && config.sounds.ng) || ''; } catch (_) {}
 
+    const cols = mergeCols(config);
+    const tableCode = tableCodeOf(config);
     const $input = document.getElementById('tana-input');
     const $badge = document.getElementById('tana-badge');
     const $msg = document.getElementById('tana-msg');
     const focusInput = () => setTimeout(() => $input.focus(), 0);
+    focusInput();
 
     $input.addEventListener('keydown', async (ev) => {
       if (ev.key !== 'Enter') return;
       ev.preventDefault();
-
       const raw = $input.value; $input.value = '';
-      if (!raw) { focusInput(); return; }
 
-      const num = String(raw).match(/-?\d+/);
-      const overrideMap = { A: String(raw), B: new Date(), C: num ? Number(num[0]) : '' };
+      const num = String(raw||'').match(/-?\d+/);
+      const overrideMap = { A:String(raw||''), B:new Date(), C: num ? Number(num[0]) : '' };
       const { allOk, reason } = evalRules(config, rec, overrideMap);
 
-      const cols = mergeCols(config);
-      const tableCode = tableCodeOf(config);
-
-      const rowUi = {};
-      rowUi[cols.datetime]  = T.dt(new Date());
-      // 詳細画面側では製品分解はしない（空で記録）
-      rowUi[cols.product]   = T.text('');
-      rowUi[cols.width]     = T.num('');
-      rowUi[cols.length]    = T.num('');
-      rowUi[cols.lot]       = T.text('');
-      rowUi[cols.label]     = T.text('');
-      rowUi[cols.packs]     = T.num('');
-      rowUi[cols.rotation]  = T.num('');
-      rowUi[cols.result]    = T.text(allOk ? 'OK' : 'NG');
-      rowUi[cols.reason]    = T.mtext(allOk ? '' : reason);
+      // 行（全列に type/value を埋める。製品分解は詳細画面ではしない）
+      const row = {};
+      row[cols.datetime]  = T.dt(new Date());
+      row[cols.product]   = T.text('');
+      row[cols.width]     = T.num('');
+      row[cols.length]    = T.num('');
+      row[cols.lot]       = T.text('');
+      row[cols.label]     = T.text('');
+      row[cols.packs]     = T.num('');
+      row[cols.rotation]  = T.num('');
+      row[cols.result]    = T.text(allOk ? 'OK' : 'NG');
+      row[cols.reason]    = T.mtext(allOk ? '' : reason);
 
       try {
-        await appendRowTyped(config, rec, rowUi, cols, tableCode);
-        if (allOk) { $badge.style.background = '#d1fae5'; $badge.textContent = 'OK'; try { okA.currentTime = 0; okA.play(); } catch (_) {} $msg.textContent = 'OKで記録しました。'; }
-        else       { $badge.style.background = '#fee2e2'; $badge.textContent = 'NG'; try { ngA.currentTime = 0; ngA.play(); } catch (_) {} $msg.textContent = `NG：${reason}`; }
+        // 現在の rows を型付きで整える → 追加 → API で保存 → 画面に型付きで反映
+        if (!rec.record[tableCode]) rec.record[tableCode] = { type: 'SUBTABLE', value: [] };
+        if (!Array.isArray(rec.record[tableCode].value)) rec.record[tableCode].value = [];
+        sanitizeSubtable(rec.record, tableCode, cols);
+
+        const nextTyped = rec.record[tableCode].value.concat([{ value: row }]);
+        const apiValue = toApiRowsTyped(nextTyped);
+        const url  = kintone.api.url('/k/v1/record.json', true);
+        const body = { app: kintone.app.getId(), id: rec.$id?.value || rec.record.$id?.value, record: { [tableCode]: { value: apiValue } } };
+        await kintone.api(url, 'PUT', body);
+
+        rec.record[tableCode].value = nextTyped;
+        kintone.app.record.set({ record: rec.record }); // イベント外なのでOK
+
+        if (allOk) { $badge.style.background = '#d1fae5'; $badge.textContent = 'OK'; try { okA.currentTime=0; okA.play(); } catch(_){} $msg.textContent = 'OKで記録しました。'; }
+        else       { $badge.style.background = '#fee2e2'; $badge.textContent = 'NG'; try { ngA.currentTime=0; ngA.play(); } catch(_){} $msg.textContent = `NG：${reason}`; }
+
       } catch (e) {
-        console.error(e); $badge.style.background = '#fde68a'; $badge.textContent = 'ERR'; $msg.textContent = '保存時にエラーが発生しました。';
+        console.error(e);
+        $badge.style.background = '#fde68a'; $badge.textContent = 'ERR';
+        $msg.textContent = '保存時にエラーが発生しました。';
       }
 
       focusInput();
     });
-
-    focusInput();
   }
 
-  // --- 詳細画面：イベント中はUI作らない（setTimeoutで脱出） ---
+  // ===== 詳細画面（イベント内では何もしない・参照だけ） =====
   kintone.events.on('app.record.detail.show', (event) => {
-    const cfgStr = event.record.json_config?.value;
-    if (!cfgStr) return event;
+    let cfg = {};
+    try { cfg = JSON.parse(event.record.json_config?.value || '{}'); } catch (_) { console.error('json_config parse error'); return event; }
 
-    let config = {};
-    try { config = JSON.parse(cfgStr); }
-    catch (e) { console.error('json_config parse error', e); return event; }
-
-    // handler 内では kintone.app.record.get() 系を呼ばない
+    // 参照を保存（イベント内で get()/set() はしない）
     const rec = { record: event.record, $id: { value: event.record.$id.value } };
+    try { window.__TANA_CFG__ = cfg; window.__TANA_REC__ = rec; } catch (_) {}
 
-    // イベント終了後に UI 設置
-    setTimeout(() => {
-      try { mountAutoScan(config, rec); } catch (e) { console.error(e); }
-    }, 0);
+    // イベント終了後に UI を組み立てる
+    setTimeout(() => { try { mountPanel(cfg, rec); } catch (e) { console.error(e); } }, 0);
 
     return event;
   });

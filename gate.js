@@ -1,13 +1,133 @@
-/* gate.js unified v2 — handler内でget()禁止 & typeを一切書かない */
+/* gate.js — TANA-OROSHI fixed v2025-11-06-01 */
 (function () {
-  window.__TANA_GATE__ = 'ok';
+  'use strict';
 
-  // ---------- utils ----------
+  const GATE_VERSION = 'gate-2025-11-06-01';
+  try { console.info('[TANA-OROSHI] gate.js loaded:', GATE_VERSION); } catch (_) {}
+  window.__TANA_GATE_VERSION = GATE_VERSION;
+
+  // ===== デフォルト列マッピング（設定JSONに無ければこれ） =====
+  const DEFAULT_COLS = {
+    datetime: 'scan_at',
+    product: 'col_prod',
+    width: 'col_width',
+    length: 'col_length',
+    lot: 'col_lot',
+    label: 'col_label',
+    packs: 'col_packs',
+    rotation: 'col_rotation',
+    result: 'result',
+    reason: 'reason',
+  };
+
+  // ===== 型付き値（undefined を出さない） =====
+  const T = {
+    text: (v) => ({ type: 'SINGLE_LINE_TEXT', value: v == null ? '' : String(v) }),
+    mtext: (v) => ({ type: 'MULTI_LINE_TEXT', value: v == null ? '' : String(v) }),
+    num: (v) => {
+      const s = v == null ? '' : String(v).trim();
+      if (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) return { type: 'NUMBER', value: null };
+      return { type: 'NUMBER', value: s };
+    },
+    dt: (v) => {
+      if (!v) return { type: 'DATETIME', value: null };
+      const d = (v instanceof Date) ? v : new Date(v);
+      return { type: 'DATETIME', value: d.toISOString() };
+    },
+  };
+
+  // ===== REST API 用に型付き → API形式へ変換 =====
+  function toApiRowsTyped(rowsTyped) {
+    return rowsTyped.map((row) => {
+      const api = { value: {} };
+      if (row.id) api.id = row.id;
+      Object.entries(row.value || {}).forEach(([code, cell]) => {
+        let v = cell ? cell.value : null;
+        if (cell && cell.type === 'NUMBER') {
+          v = (v === '' || v == null) ? null : Number(v);
+        } else if (cell && cell.type === 'DATETIME') {
+          v = v || null; // 既に ISO
+        } else {
+          v = v == null ? '' : v;
+        }
+        api.value[code] = { value: v };
+      });
+      return api;
+    });
+  }
+
+  // ===== 既存行も含めサブテーブルを正規化（undefined 排除） =====
+  function sanitizeSubtable(record, tableCode, cols) {
+    if (!record[tableCode]) return;
+    const TYPE_MAP = {
+      [cols.datetime]: 'DATETIME',
+      [cols.product]: 'SINGLE_LINE_TEXT',
+      [cols.width]: 'NUMBER',
+      [cols.length]: 'NUMBER',
+      [cols.lot]: 'SINGLE_LINE_TEXT',
+      [cols.label]: 'SINGLE_LINE_TEXT',
+      [cols.packs]: 'NUMBER',
+      [cols.rotation]: 'NUMBER',
+      [cols.result]: 'SINGLE_LINE_TEXT',
+      [cols.reason]: 'MULTI_LINE_TEXT',
+    };
+    const rows = Array.isArray(record[tableCode].value) ? record[tableCode].value : [];
+    rows.forEach((row) => {
+      if (!row.value) row.value = {};
+      const cells = row.value;
+      // 無いセルを空で補完
+      Object.keys(TYPE_MAP).forEach((code) => {
+        if (!cells[code]) {
+          const t = TYPE_MAP[code];
+          cells[code] =
+            t === 'NUMBER' ? { type: t, value: null } :
+            t === 'DATETIME' ? { type: t, value: null } :
+            { type: t, value: '' };
+        }
+      });
+      // 値の正規化
+      Object.entries(cells).forEach(([code, cell]) => {
+        const t = TYPE_MAP[code] || cell.type;
+        let v = cell ? cell.value : undefined;
+        if (t === 'NUMBER') {
+          const s = v == null ? '' : String(v).trim();
+          v = (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) ? null : s;
+          cells[code] = { type: 'NUMBER', value: v };
+        } else if (t === 'DATETIME') {
+          v = v ? new Date(v).toISOString() : null;
+          cells[code] = { type: 'DATETIME', value: v };
+        } else if (t === 'MULTI_LINE_TEXT' || t === 'SINGLE_LINE_TEXT') {
+          v = v == null ? '' : String(v);
+          cells[code] = { type: t, value: v };
+        } else {
+          v = v == null ? '' : String(v);
+          cells[code] = { type: t, value: v };
+        }
+      });
+    });
+  }
+
+  // ===== QR を右詰めで分解（製品名は可変長） =====
+  function parseScan(raw) {
+    const s = (raw || '').trim();
+    if (!s) return null;
+    const a = s.split(/\s+/);
+    if (a.length < 7) return null;
+    const rotation = a.pop();
+    const packs = a.pop();
+    const label_no = a.pop();
+    const lot_no = a.pop();
+    const length = a.pop();
+    const width = a.pop();
+    const product_name = a.join(' ');
+    return { product_name, width, length, lot_no, label_no, packs, rotation };
+  }
+
+  // ===== ルール評価（元の gate.js と同等） =====
   const asNumber = (v) => (v === '' || v == null ? null : Number(v));
-  const asDate = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; };
-  const iso = (d) => (d ? new Date(d).toISOString() : '');
+  const asDate   = (v) => { if (!v) return null; const d = new Date(v); return isNaN(d.getTime()) ? null : d; };
+  const iso      = (d) => (d ? new Date(d).toISOString() : '');
   const numStrOrEmpty = (v) => (v === '' || v == null ? '' : String(v));
-
   const cmpNum = (L, op, R) => {
     if (L == null) return false;
     if (op === '>') return L > R;
@@ -43,7 +163,6 @@
     if (op === 'notIn') return Array.isArray(R) && !R.includes(L);
     return false;
   };
-
   function evalRules(config, rec, overrideMap, log = false) {
     const key2code = {};
     (config.recordSchema || []).forEach((s) => (key2code[s.key] = s.fieldCode));
@@ -61,7 +180,6 @@
       if (type === 'datetime') return asDate(v);
       return v;
     };
-
     const results = [];
     for (const r of config.rules || []) {
       const L = read(r.key, r.type);
@@ -83,56 +201,34 @@
     };
   }
 
-  // サブテーブルに1行追加（PUT+画面反映）— value のみ送る
-  async function appendRow(config, rec, row) {
-    const tableCode = config.ui?.table?.fieldCode;
-    const curr = rec.record[tableCode]?.value || [];
-    const next = curr.concat([{ value: row }]);
+  // ===== サブテーブルに 1 行追加（API + 画面反映：いずれも type 付きで安全） =====
+  async function appendRowTyped(config, rec, rowUi, cols, tableCode) {
+    // 現在の型付き rows
+    if (!rec.record[tableCode]) rec.record[tableCode] = { type: 'SUBTABLE', value: [] };
+    if (!Array.isArray(rec.record[tableCode].value)) rec.record[tableCode].value = [];
+
+    // 既存行もまずサニタイズ（undefined を潰す）
+    sanitizeSubtable(rec.record, tableCode, cols);
+
+    const currTyped = rec.record[tableCode].value;
+    const nextTyped = currTyped.concat([{ value: rowUi }]);
+
+    // API 形式へ変換して PUT
+    const apiValue = toApiRowsTyped(nextTyped);
     const body = {
       app: kintone.app.getId(),
-      id: rec.recordId || rec.$id?.value,
-      record: { [tableCode]: { value: next } } // typeは送らない
+      id: rec.recordId || rec.$id?.value || rec.record.$id?.value,
+      record: { [tableCode]: { value: apiValue } }
     };
     const url = kintone.api.url('/k/v1/record.json', true);
-    const res = await kintone.api(url, 'PUT', body);
-    // 画面反映
-    rec.record[tableCode].value = next;
+    await kintone.api(url, 'PUT', body);
+
+    // 画面反映（型付きで set する）
+    rec.record[tableCode].value = nextTyped;
     kintone.app.record.set({ record: rec.record });
-    return res;
   }
 
-  // ---------- ボタン運用 ----------
-  async function judgeAndAppendByButton(rec) {
-    const cfgStr = rec.record.json_config?.value;
-    if (!cfgStr) { alert('設定JSON(json_config)が見つかりません。'); return; }
-    let config;
-    try { config = JSON.parse(cfgStr); } catch (e) { alert('設定JSONのパースに失敗しました。'); console.error(e); return; }
-
-    const { allOk, reason } = evalRules(config, rec, null, true);
-
-    const cols = config.ui?.table?.columns || {};
-    const key2code = {}; (config.recordSchema || []).forEach(s => key2code[s.key] = s.fieldCode);
-    const vA = rec.record[key2code.A]?.value ?? '';
-    const vB = rec.record[key2code.B]?.value ?? '';
-    const vC = rec.record[key2code.C]?.value ?? '';
-
-    const row = {};
-    row[cols.datetime] = { value: iso(new Date()) };
-    row[cols.A] = { value: vA };
-    row[cols.B] = { value: vB ? iso(vB) : '' };
-    row[cols.C] = { value: vC === '' ? '' : numStrOrEmpty(vC) };
-    row[cols.result] = { value: allOk ? 'OK' : 'NG' };
-    row[cols.reason] = { value: allOk ? '' : reason };
-
-    try {
-      await appendRow(config, rec, row);
-      alert(allOk ? 'OK：サブテーブルに行を追加しました。' : `NG：サブテーブルに行を追加しました。\n理由：${reason}`);
-    } catch (e) {
-      console.error(e); alert('保存時にエラーが発生しました。');
-    }
-  }
-
-  // ---------- 自動スキャンUI ----------
+  // ===== 自動スキャン UI（詳細画面） =====
   function mountAutoScan(config, rec) {
     if (document.getElementById('tana-scan-panel')) return;
 
@@ -145,18 +241,11 @@
     wrap.innerHTML = `
       <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
         <div style="font-weight:600;">SCAN</div>
-        <input id="tana-input" autocomplete="off" placeholder="ここにQRをかざす／入力→Enter"
+        <input id="tana-input" autocomplete="off" placeholder="ここにQRを入力→Enter"
                style="flex:1;min-width:280px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:8px;font-size:16px" />
-        <label style="display:flex;align-items:center;gap:6px;">
-          NG時の動作
-          <select id="tana-ng-mode" style="padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
-            <option value="hold">保留して続行</option>
-            <option value="stop">停止する</option>
-          </select>
-        </label>
         <span id="tana-badge" style="padding:6px 10px;border-radius:999px;background:#e5e7eb;color:#111;font-weight:600;">READY</span>
       </div>
-      <div id="tana-msg" style="margin-top:8px;color:#64748b;font-size:13px;">Enterで即判定します。結果は下のサブテーブルに自動追加。</div>
+      <div id="tana-msg" style="margin-top:8px;color:#64748b;font-size:13px;">Enterで即判定し、サブテーブルへ追記します。</div>
       <audio id="tana-ok-audio"></audio>
       <audio id="tana-ng-audio"></audio>
     `;
@@ -164,98 +253,80 @@
 
     const okA = document.getElementById('tana-ok-audio');
     const ngA = document.getElementById('tana-ng-audio');
-    okA.src = config.ui?.sound?.ok?.file || '';
-    ngA.src = config.ui?.sound?.error?.file || '';
+    // 音源は無くても動作する
+    try { okA.src = config.ui?.sound?.ok?.file || ''; } catch (_) {}
+    try { ngA.src = config.ui?.sound?.error?.file || ''; } catch (_) {}
 
     const $input = document.getElementById('tana-input');
     const $badge = document.getElementById('tana-badge');
     const $msg = document.getElementById('tana-msg');
-
-    const ngSel = document.getElementById('tana-ng-mode');
-    ngSel.value = localStorage.getItem('TANA_NG_MODE') || 'hold';
-    ngSel.onchange = () => localStorage.setItem('TANA_NG_MODE', ngSel.value);
     const focusInput = () => setTimeout(() => $input.focus(), 0);
     focusInput();
 
-    async function handleScan(raw) {
-      if (!raw) return;
+    $input.addEventListener('keydown', async (ev) => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+      const raw = $input.value;
+      $input.value = '';
 
-      // MVPマッピング：A=raw、B=Now、C=raw内の最初の整数（なければ空）
+      const parsed = parseScan(raw);
+      if (!parsed) { $msg.textContent = 'QR形式が不正です（7要素不足）'; focusInput(); return; }
+
+      // 判定（既存の A/B/C ルール互換：A=raw, B=Now, C=raw 内の最初の整数）
       const num = String(raw).match(/-?\d+/);
-      const map = { A: String(raw), B: new Date(), C: num ? Number(num[0]) : '' };
+      const overrideMap = { A: String(raw), B: new Date(), C: num ? Number(num[0]) : '' };
+      const { allOk, reason } = evalRules(config, rec, overrideMap, false);
 
-      const { allOk, reason } = evalRules(config, rec, map, false);
+      const cols = (config && config.ui && config.ui.table && config.ui.table.columns) || DEFAULT_COLS;
+      const tableCode = (config && config.ui && config.ui.table && config.ui.table.fieldCode) || 'scan_table';
 
-      const cols = config.ui?.table?.columns || {};
-      const row = {};
-      row[cols.datetime] = { value: iso(new Date()) };
-      row[cols.A] = { value: map.A };
-      row[cols.B] = { value: iso(map.B) };
-      row[cols.C] = { value: map.C === '' ? '' : numStrOrEmpty(map.C) };
-      row[cols.result] = { value: allOk ? 'OK' : 'NG' };
-      row[cols.reason] = { value: allOk ? '' : reason };
+      // 型付きの 1 行
+      const rowUi = {};
+      rowUi[cols.datetime]  = T.dt(new Date());
+      rowUi[cols.product]   = T.text(parsed.product_name);
+      rowUi[cols.width]     = T.num(parsed.width);
+      rowUi[cols.length]    = T.num(parsed.length);
+      rowUi[cols.lot]       = T.text(parsed.lot_no);
+      rowUi[cols.label]     = T.text(parsed.label_no);
+      rowUi[cols.packs]     = T.num(parsed.packs);
+      rowUi[cols.rotation]  = T.num(parsed.rotation);
+      rowUi[cols.result]    = T.text(allOk ? 'OK' : 'NG');
+      rowUi[cols.reason]    = T.mtext(allOk ? '' : reason);
 
       try {
-        await appendRow(config, rec, row);
+        await appendRowTyped(config, rec, rowUi, cols, tableCode);
         if (allOk) {
           $badge.style.background = '#d1fae5'; $badge.textContent = 'OK';
-          try { okA.currentTime = 0; okA.play(); } catch (e) {}
+          try { okA.currentTime = 0; okA.play(); } catch (_) {}
           $msg.textContent = 'OKで記録しました。';
         } else {
           $badge.style.background = '#fee2e2'; $badge.textContent = 'NG';
-          try { ngA.currentTime = 0; ngA.play(); } catch (e) {}
+          try { ngA.currentTime = 0; ngA.play(); } catch (_) {}
           $msg.textContent = `NG：${reason}`;
-          if (ngSel.value === 'stop') {
-            $input.disabled = true;
-            const btn = document.createElement('button');
-            btn.textContent = '再開する';
-            btn.style.cssText = 'margin-left:8px;padding:6px 10px;border:1px solid #94a3b8;border-radius:8px;background:#fff;';
-            btn.onclick = () => { $input.disabled = false; btn.remove(); focusInput(); };
-            $msg.appendChild(btn);
-          }
         }
       } catch (e) {
         console.error(e);
         $badge.style.background = '#fde68a'; $badge.textContent = 'ERR';
         $msg.textContent = '保存時にエラーが発生しました。';
       }
-    }
 
-    $input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') {
-        const raw = $input.value;
-        $input.value = '';
-        handleScan(raw);
-        focusInput();
-      }
+      focusInput();
     });
   }
 
-  // ---------- 詳細画面 ----------
+  // ===== 詳細画面 =====
   kintone.events.on('app.record.detail.show', (event) => {
-    const cfgStr = event.record.json_config?.value;
+    const rec = { record: event.record, $id: { value: event.record.$id.value } };
+
+    // 設定 JSON
+    const cfgStr = event.record.json_config && event.record.json_config.value;
     if (!cfgStr) return;
 
     let config = {};
-    try { config = JSON.parse(cfgStr); } catch (e) { console.error('json_config parse error', e); return; }
+    try { config = JSON.parse(cfgStr); }
+    catch (e) { console.error('json_config parse error', e); return; }
 
-    // event 由来のラッパーを作って渡す（handler内で get() しない）
-    const rec = { record: event.record, $id: { value: event.record.$id.value } };
-
-    // ボタン
-    if (!document.getElementById('tana-judge-btn')) {
-      const space = kintone.app.record.getHeaderMenuSpaceElement?.() || kintone.app.getHeaderMenuSpaceElement?.();
-      if (space) {
-        const btn = document.createElement('button');
-        btn.id = 'tana-judge-btn';
-        btn.textContent = '判定して記録';
-        btn.style.cssText = 'padding:8px 12px;border-radius:6px;background:#3b82f6;color:#fff;border:none;cursor:pointer;margin-right:8px;';
-        btn.onclick = () => judgeAndAppendByButton(rec);
-        space.appendChild(btn);
-      }
-    }
-
-    // 自動スキャン（既定ON）
+    // 自動スキャン UI を設置
     const autoOn = config.ui?.autoScan?.enabled !== false;
     if (autoOn) mountAutoScan(config, rec);
   });

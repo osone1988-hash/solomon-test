@@ -1,15 +1,16 @@
 (function () {
   'use strict';
 
-  // ===== 版数（読み込み確認用） =====
-  const PCJS_VERSION = 'pc-2025-11-06-02';
-  console.info('[TANA-OROSHI] pc.js loaded:', PCJS_VERSION);
+  // ===== 版数（読込確認用） =====
+  const PCJS_VERSION = 'pc-2025-11-06-03';
+  // Console のログレベルが「Info/Verbose」以外だと見えません
+  try { console.info('[TANA-OROSHI] pc.js loaded:', PCJS_VERSION); } catch (e) {}
   window.__TANA_PC_VERSION = PCJS_VERSION;
 
-  // ===== UI ユーティリティ =====
+  // ===== 小ユーティリティ =====
   const byId = (id) => document.getElementById(id);
 
-  // ===== デフォルト列コード（設定JSONが無い場合のフォールバック） =====
+  // ===== デフォルト列コード（設定JSONが無い場合） =====
   const DEFAULT_COLS = {
     datetime: 'scan_at',
     product: 'col_prod',
@@ -23,16 +24,14 @@
     reason: 'reason',
   };
 
-  // ===== 型付き値ファクトリ（undefined を出さない） =====
+  // ===== 型付き値ファクトリ（undefined を絶対に出さない） =====
   const T = {
     text: (v) => ({ type: 'SINGLE_LINE_TEXT', value: v == null ? '' : String(v) }),
     mtext: (v) => ({ type: 'MULTI_LINE_TEXT', value: v == null ? '' : String(v) }),
     num: (v) => {
       const s = v == null ? '' : String(v).trim();
-      // 空・非数は null、数値は “数値の文字列”
-      if (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) {
-        return { type: 'NUMBER', value: null };
-      }
+      // 空・非数は null、数値は「数値の文字列」
+      if (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) return { type: 'NUMBER', value: null };
       return { type: 'NUMBER', value: s };
     },
     dt: (v) => {
@@ -42,7 +41,7 @@
     },
   };
 
-  // ===== QR を右詰めで 7 要素に分解（製品名は可変長） =====
+  // ===== QR を右詰め分解（製品名は可変長） =====
   function parseScan(raw) {
     const s = (raw || '').trim();
     if (!s) return null;
@@ -62,25 +61,24 @@
 
   // ===== 新規行を構築（type/value 完備） =====
   function buildRow(cols, data) {
-    const v = {};
-    v[cols.datetime]  = T.dt(new Date());
-    v[cols.product]   = T.text(data.product_name);
-    v[cols.width]     = T.num(data.width);
-    v[cols.length]    = T.num(data.length);
-    v[cols.lot]       = T.text(data.lot_no);
-    v[cols.label]     = T.text(data.label_no);
-    v[cols.packs]     = T.num(data.packs);
-    v[cols.rotation]  = T.num(data.rotation);
-    v[cols.result]    = T.text('');   // 判定は後段で付与
-    v[cols.reason]    = T.mtext('');  // 理由は必要時に付与
-    return { value: v };
+    const row = {};
+    row[cols.datetime]  = T.dt(new Date());
+    row[cols.product]   = T.text(data.product_name);
+    row[cols.width]     = T.num(data.width);
+    row[cols.length]    = T.num(data.length);
+    row[cols.lot]       = T.text(data.lot_no);
+    row[cols.label]     = T.text(data.label_no);
+    row[cols.packs]     = T.num(data.packs);
+    row[cols.rotation]  = T.num(data.rotation);
+    row[cols.result]    = T.text('');
+    row[cols.reason]    = T.mtext('');
+    return { value: row };
   }
 
-  // ===== 既存行も含めサブテーブル全体をサニタイズ =====
+  // ===== サブテーブル全体のサニタイズ（既存行も補正） =====
   function sanitizeSubtable(record, tableCode, cols) {
     if (!record[tableCode]) return;
 
-    // 想定型マップ（列コード → kintone 型）
     const TYPE_MAP = {
       [cols.datetime]:  'DATETIME',
       [cols.product]:   'SINGLE_LINE_TEXT',
@@ -99,7 +97,7 @@
       if (!row.value) row.value = {};
       const cells = row.value;
 
-      // 足りないセルを補完（空デフォルト）
+      // 無いセルを追加（空の正規値で）
       Object.keys(TYPE_MAP).forEach((code) => {
         if (!cells[code]) {
           const t = TYPE_MAP[code];
@@ -110,7 +108,7 @@
         }
       });
 
-      // 既存セルを型・値ともに正規化（undefined を除去）
+      // 既存セルを正規化（undefined を排除）
       Object.entries(cells).forEach(([code, cell]) => {
         const t = TYPE_MAP[code] || cell.type;
         if (!t) return;
@@ -128,7 +126,6 @@
           v = v == null ? '' : String(v);
           cells[code] = { type: t, value: v };
         } else {
-          // その他型は文字列化しておく（念のため）
           v = v == null ? '' : String(v);
           cells[code] = { type: t, value: v };
         }
@@ -136,22 +133,40 @@
     });
   }
 
+  // ===== 旧 UI を強制撤去（旧pc.jsのハンドラごと除去） =====
+  function removeOldScanUI() {
+    const el = byId('tana-scan');
+    if (el) {
+      // 旧版は <div>(wrap) の直下に label/input/button の並び
+      const wrap = el.parentElement;
+      if (wrap && wrap.parentElement) {
+        try { wrap.parentElement.removeChild(wrap); } catch (e) { try { el.remove(); } catch (_) {} }
+      } else {
+        try { el.remove(); } catch (_) {}
+      }
+    }
+  }
+
   // ===== 編集画面 =====
   kintone.events.on('app.record.edit.show', (event) => {
     const r = event.record;
 
-    // 設定 JSON 読み込み
+    // 設定 JSON を読む
     let cfg = {};
     try {
       cfg = JSON.parse((r.json_config && r.json_config.value) || '{}');
-    } catch (e) {
+    } catch (_) {
       alert('設定JSONのパースに失敗しました。json_config を確認してください。');
-      return event; // return true は使用しない
+      return event;
     }
 
-    // UI（多重生成防止）
+    // 旧 UI / 旧ハンドラを強制撤去してから生成
+    removeOldScanUI();
+
+    // SCAN 入力 UI を新規生成
     if (!byId('tana-scan')) {
       const wrap = document.createElement('div');
+      wrap.id = 'tana-scan-wrap';
       wrap.style.margin = '8px 0 16px';
 
       const label = document.createElement('span');
@@ -162,6 +177,7 @@
       input.id = 'tana-scan';
       input.type = 'text';
       input.placeholder = 'ここにスキャン（Enterで追加）';
+      input.autocomplete = 'off';
       input.style.cssText = 'width:420px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;';
 
       const clearBtn = document.createElement('button');
@@ -173,7 +189,7 @@
       wrap.appendChild(input);
       wrap.appendChild(clearBtn);
 
-      // JSON フィールド直前に挿入
+      // JSON フィールドの直前に差し込む
       const jsonFieldEl = kintone.app.record.getFieldElement('json_config');
       if (jsonFieldEl && jsonFieldEl.parentElement) {
         jsonFieldEl.parentElement.parentElement.insertBefore(wrap, jsonFieldEl.parentElement);
@@ -185,6 +201,7 @@
       input.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter') return;
         ev.preventDefault();
+        ev.stopPropagation(); // 他スクリプトの keydown をブロック
 
         const parsed = parseScan(input.value);
         if (!parsed) {
@@ -195,25 +212,25 @@
         const tableCode = (cfg && cfg.ui && cfg.ui.table && cfg.ui.table.fieldCode) || 'scan_table';
         const cols = (cfg && cfg.ui && cfg.ui.table && cfg.ui.table.columns) || DEFAULT_COLS;
 
-        // サブテーブルの器を用意
+        // テーブル器
         if (!r[tableCode]) r[tableCode] = { type: 'SUBTABLE', value: [] };
         if (!Array.isArray(r[tableCode].value)) r[tableCode].value = [];
 
-        // 新規行を push
+        // 新規行 push
         r[tableCode].value.push(buildRow(cols, parsed));
 
-        // 既存行も含めて最後に必ずサニタイズ
+        // 既存行も含めサニタイズ（undefined を撲滅）
         sanitizeSubtable(r, tableCode, cols);
 
         // 反映
         kintone.app.record.set({ record: r });
 
-        // 入力欄をリセット
+        // 入力欄リセット
         input.value = '';
         input.focus();
       });
     }
 
-    return event;
+    return event; // return true は使用しない
   });
 })();

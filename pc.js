@@ -1,18 +1,18 @@
 /* TANA-OROSHI pc.js — 編集画面SCAN + ドロップ判定 + サーバー保存（GET→PUT, value-only）
-   v=pc-ng-rules-2025-11-10-3 */
+   v=pc-ng-rules-2025-11-10-4 */
 (function () {
   'use strict';
 
-  const VERSION = 'pc-ng-rules-2025-11-10-3';
-  console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
-  try { window.__TANA_PC_VERSION = VERSION; } catch (_) {}
+  const VERSION = 'pc-ng-rules-2025-11-10-4';
+  try { console.log('[TANA-OROSHI] pc.js loaded:', VERSION); window.__TANA_PC_VERSION = VERSION; } catch (_) {}
 
-  // ===== 固定フィールド（3項目テスト） =====
+  // 判定フィールド（3項目テスト）
   const JUDGE = {
     text:   { value: 'a',  op: 'aj' },
     number: { value: 'b',  op: 'bj' },
     date:   { value: 'c',  op: 'cj' },
   };
+  // サブテーブル
   const TABLE = 'scan_table';
   const COL = { scanAt:'scan_at', at:'at', bt:'bt', ct:'ct', result:'result', reason:'reason' };
 
@@ -27,11 +27,7 @@
   function parseDateLoose(s) {
     if (!s) return null;
     const str = String(s).trim();
-    if (/^\d{8}$/.test(str)) {
-      const y = +str.slice(0,4), m = +str.slice(4,6)-1, d = +str.slice(6,8);
-      const dt = new Date(y, m, d);
-      return Number.isNaN(dt.getTime()) ? null : dt;
-    }
+    if (/^\d{8}$/.test(str)) { const y=+str.slice(0,4), m=+str.slice(4,6)-1, d=+str.slice(6,8); const dt=new Date(y,m,d); return Number.isNaN(dt.getTime())?null:dt; }
     const dt = new Date(str.replace(/\//g, '-'));
     return Number.isNaN(dt.getTime()) ? null : dt;
   }
@@ -91,8 +87,8 @@
     const sv = s.getTime(), bv = b.getTime();
     if (op === 'eq')  return sv === bv;
     if (op === 'ne')  return sv !== bv;
-    if (op === 'gte') return sv >= bv;
-    if (op === 'lte') return sv <= bv;
+    if (op === 'gte') return sv >= bv; // 以降
+    if (op === 'lte') return sv <= bv; // 以前
     return false;
   }
 
@@ -112,104 +108,108 @@
     return { at: text, bt: num, ct: date };
   }
 
+  // === イベント本体（全面try/catchで保護） ===
   kintone.events.on('app.record.edit.show', (event) => {
-    const rec = event.record;
-    const appId = kintone.app.getId();
-    const recId = rec.$id?.value || kintone.app.record.getId();
+    try {
+      const rec = event.record;
+      const appId = kintone.app.getId?.();
+      const recId = rec.$id?.value || kintone.app.record.getId?.();
+      if (!appId || !recId) return event;
 
-    if (!document.getElementById('tana-scan-wrap')) {
-      const wrap = document.createElement('div');
-      wrap.id = 'tana-scan-wrap';
-      wrap.style.cssText = 'margin:10px 0 16px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
-      wrap.innerHTML = `
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <strong>SCAN</strong>
-          <input id="tana-scan-input" type="text" autocomplete="off"
-            placeholder="(文字) (数値) (日時) の順に入力 → Enter"
-            style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
-          <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
-          <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY</span>
-        </div>
-        <div style="margin-top:6px;color:#64748b;font-size:12px">
-          NG条件：a/aj・b/bj・c/cj。未選択や基準空は判定対象外。NGでも常に記録します。
-        </div>
-      `;
-      const anchor = kintone.app.record.getFieldElement('json_config');
-      if (anchor?.parentElement?.parentElement) {
-        anchor.parentElement.parentElement.insertBefore(wrap, anchor.parentElement);
-      } else {
-        document.body.appendChild(wrap);
+      if (!$('#tana-scan-wrap')) {
+        const wrap = document.createElement('div');
+        wrap.id = 'tana-scan-wrap';
+        wrap.style.cssText = 'margin:10px 0 16px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
+        wrap.innerHTML = `
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <strong>SCAN</strong>
+            <input id="tana-scan-input" type="text" autocomplete="off"
+              placeholder="(文字) (数値) (日時) の順に入力 → Enter"
+              style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
+            <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
+            <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY</span>
+          </div>
+          <div style="margin-top:6px;color:#64748b;font-size:12px">
+            NG条件：a/aj・b/bj・c/cj。未選択や基準空は判定対象外。NGでも常に記録します。
+          </div>
+        `;
+        const anchor = kintone.app.record.getFieldElement?.('json_config');
+        if (anchor?.parentElement?.parentElement) {
+          anchor.parentElement.parentElement.insertBefore(wrap, anchor.parentElement);
+        } else {
+          document.body.appendChild(wrap);
+        }
+
+        const $in = $('#tana-scan-input');
+        const $clear = $('#tana-scan-clear');
+        const $st = $('#tana-scan-status');
+
+        let busy = false;
+
+        $clear?.addEventListener('click', () => { if ($in) { $in.value = ''; $in.focus(); } });
+        setTimeout(() => $in?.focus(), 0);
+
+        $in?.addEventListener('keydown', async (ev) => {
+          if (ev.key !== 'Enter') return;
+          ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
+          if (busy) return; busy = true;
+
+          try {
+            const raw = $in?.value ?? '';
+            const { at, bt, ct } = parseScan3(raw);
+            const atTxt = toText(at);
+            const ctIso = ct ? iso(ct) : null;
+
+            const aVal = rec[JUDGE.text.value ]?.value ?? '';
+            const aOp  = rec[JUDGE.text.op    ]?.value ?? '';
+            const bVal = rec[JUDGE.number.value]?.value ?? '';
+            const bOp  = rec[JUDGE.number.op   ]?.value ?? '';
+            const cVal = rec[JUDGE.date.value ]?.value ?? '';
+            const cOp  = rec[JUDGE.date.op    ]?.value ?? '';
+
+            const ngA = isNG_text(  atTxt,  normalizeOp('text',   aOp), aVal);
+            const ngB = isNG_number(bt,     normalizeOp('number', bOp), bVal);
+            const ngC = isNG_date(  ct,     normalizeOp('date',   cOp), cVal);
+
+            const reasons = [];
+            if (ngA) reasons.push(`a:${aOp}`);
+            if (ngB) reasons.push(`b:${bOp}`);
+            if (ngC) reasons.push(`c:${cOp}`);
+
+            const result = (ngA || ngB || ngC) ? 'NG' : 'OK';
+            const reason = reasons.join(' / ');
+
+            const row = {};
+            row[COL.scanAt] = { value: iso(new Date()) };
+            row[COL.at]     = { value: atTxt };
+            row[COL.bt]     = { value: bt };
+            row[COL.ct]     = { value: ctIso };
+            row[COL.result] = { value: result };
+            row[COL.reason] = { value: reason };
+
+            if ($st) $st.textContent = 'SAVING...';
+            if ($in) $in.value = ''; // 先にクリア
+
+            await appendRow(appId, recId, row);
+
+            if ($st) $st.textContent = result === 'OK' ? 'OKで記録' : `NGで記録：${reason || '一致'}`;
+            // すぐにはリロードせず、少し待ってから（拡張機能の干渉を避ける）
+            setTimeout(() => { try { location.reload(); } catch (_) {} }, 80);
+
+          } catch (e) {
+            console.error('[TANA] keydown error:', e);
+            if ($st) $st.textContent = 'ERROR: 保存失敗';
+            alert('保存に失敗しました。ネットワークまたは権限をご確認ください。');
+          } finally {
+            busy = false;
+          }
+        }, { capture: true });
       }
 
-      const $in = document.getElementById('tana-scan-input');
-      const $clear = document.getElementById('tana-scan-clear');
-      const $st = document.getElementById('tana-scan-status');
-
-      let busy = false;
-
-      $clear.onclick = () => { if ($in) { $in.value = ''; $in.focus(); } };
-      setTimeout(() => $in?.focus(), 0);
-
-      $in.addEventListener('keydown', async (ev) => {
-        if (ev.key !== 'Enter') return;
-        ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
-        if (busy) return; busy = true;
-
-        try {
-          if (!$in) return;
-          const raw = $in.value;
-          const { at, bt, ct } = parseScan3(raw);
-          const atTxt = toText(at);
-          const ctIso = ct ? iso(ct) : null;
-
-          const aVal = rec[JUDGE.text.value ]?.value ?? '';
-          const aOp  = rec[JUDGE.text.op    ]?.value ?? '';
-          const bVal = rec[JUDGE.number.value]?.value ?? '';
-          const bOp  = rec[JUDGE.number.op   ]?.value ?? '';
-          const cVal = rec[JUDGE.date.value ]?.value ?? '';
-          const cOp  = rec[JUDGE.date.op    ]?.value ?? '';
-
-          const ngA = isNG_text(  atTxt,  normalizeOp('text',   aOp), aVal);
-          const ngB = isNG_number(bt,     normalizeOp('number', bOp), bVal);
-          const ngC = isNG_date(  ct,     normalizeOp('date',   cOp), cVal);
-
-          const reasons = [];
-          if (ngA) reasons.push(`a:${aOp}`);
-          if (ngB) reasons.push(`b:${bOp}`);
-          if (ngC) reasons.push(`c:${cOp}`);
-
-          const result = (ngA || ngB || ngC) ? 'NG' : 'OK';
-          const reason = reasons.join(' / ');
-
-          const row = {};
-          row[COL.scanAt] = { value: iso(new Date()) };
-          row[COL.at]     = { value: atTxt };
-          row[COL.bt]     = { value: bt };
-          row[COL.ct]     = { value: ctIso };
-          row[COL.result] = { value: result };
-          row[COL.reason] = { value: reason };
-
-          if ($st) $st.textContent = 'SAVING...';
-          // 入力欄はここで先にクリア（→ この後に reload しても安全）
-          if ($in) $in.value = '';
-
-          await appendRow(appId, recId, row);
-
-          if ($st) $st.textContent = result === 'OK' ? 'OKで記録' : `NGで記録：${reason || '一致'}`;
-
-          // 最後にのみリロード（UIへ set() は使わない）
-          location.reload();
-
-        } catch (e) {
-          console.error(e);
-          if ($st) $st.textContent = 'ERROR: 保存失敗';
-          alert('保存に失敗しました。ネットワークまたは権限をご確認ください。');
-        } finally {
-          busy = false;
-        }
-      }, { capture: true });
+    } catch (e) {
+      console.error('[TANA] init error:', e);
+      // ここで例外を飲み込み、必ず画面表示を継続
     }
-
-    return event; // event.record は変更しない
+    return event;
   });
 })();

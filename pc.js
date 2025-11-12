@@ -1,12 +1,13 @@
-/* TANA-OROSHI pc.js — 編集画面SCAN + ドロップ判定 + サーバー保存（GET→PUT, value-only）
-   v=pc-ng-rules-2025-11-10-4 */
+/* TANA-OROSHI pc.js — 編集画面SCAN + ドロップ判定（イベント委譲で確実動作）
+   v=pc-ng-rules-2025-11-10-5 */
 (function () {
   'use strict';
 
-  const VERSION = 'pc-ng-rules-2025-11-10-4';
+  const VERSION = 'pc-ng-rules-2025-11-10-5';
   try { console.log('[TANA-OROSHI] pc.js loaded:', VERSION); window.__TANA_PC_VERSION = VERSION; } catch (_) {}
 
-  // 判定フィールド（3項目テスト）
+  // ===== 設計（フィールド） =====
+  // 判定基準（値）とオペレータ（ドロップ）の対応
   const JUDGE = {
     text:   { value: 'a',  op: 'aj' },
     number: { value: 'b',  op: 'bj' },
@@ -17,7 +18,7 @@
   const COL = { scanAt:'scan_at', at:'at', bt:'bt', ct:'ct', result:'result', reason:'reason' };
 
   // ===== Utils =====
-  const $ = (id) => document.getElementById(id);
+  const $id = (id) => document.getElementById(id);
   const iso = (d) => (d ? new Date(d).toISOString() : null);
   const toText = (v) => (v == null ? '' : String(v));
   const toNumOrNull = (v) => {
@@ -108,54 +109,74 @@
     return { at: text, bt: num, ct: date };
   }
 
-  // === イベント本体（全面try/catchで保護） ===
+  // ===== UI 作成（a～c の下に配置） =====
+  function ensureScanUI() {
+    if ($id('tana-scan-wrap')) return;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'tana-scan-wrap';
+    wrap.style.cssText = 'margin:10px 0 16px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
+    wrap.innerHTML = `
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <strong>SCAN</strong>
+        <input id="tana-scan-input" type="text" autocomplete="off"
+          placeholder="(文字) (数値) (日時) の順に入力 → Enter"
+          style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
+        <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
+        <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY</span>
+      </div>
+    `;
+
+    // アンカー：c / cj の近辺（判定UIの直下）
+    const anchorC  = kintone.app.record.getFieldElement?.(JUDGE.date.value);
+    const anchorCJ = kintone.app.record.getFieldElement?.(JUDGE.date.op);
+    const insertTo = (anchorCJ?.parentElement?.parentElement) || (anchorC?.parentElement?.parentElement);
+
+    if (insertTo?.parentElement) {
+      insertTo.parentElement.insertBefore(wrap, insertTo.nextSibling); // cのブロック直下
+    } else {
+      // 最後の手段：json_config の前
+      const jsonEl = kintone.app.record.getFieldElement?.('json_config');
+      if (jsonEl?.parentElement?.parentElement) {
+        jsonEl.parentElement.parentElement.insertBefore(wrap, jsonEl.parentElement);
+      } else {
+        document.body.appendChild(wrap);
+      }
+    }
+  }
+
+  // ===== イベント（編集画面） =====
   kintone.events.on('app.record.edit.show', (event) => {
     try {
-      const rec = event.record;
-      const appId = kintone.app.getId?.();
-      const recId = rec.$id?.value || kintone.app.record.getId?.();
-      if (!appId || !recId) return event;
+      ensureScanUI();
+      // ドキュメント委譲：再描画されても常に届く
+      if (!window.__TANA_SCAN_BOUND__) {
+        window.__TANA_SCAN_BOUND__ = true;
 
-      if (!$('#tana-scan-wrap')) {
-        const wrap = document.createElement('div');
-        wrap.id = 'tana-scan-wrap';
-        wrap.style.cssText = 'margin:10px 0 16px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
-        wrap.innerHTML = `
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-            <strong>SCAN</strong>
-            <input id="tana-scan-input" type="text" autocomplete="off"
-              placeholder="(文字) (数値) (日時) の順に入力 → Enter"
-              style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
-            <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
-            <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY</span>
-          </div>
-          <div style="margin-top:6px;color:#64748b;font-size:12px">
-            NG条件：a/aj・b/bj・c/cj。未選択や基準空は判定対象外。NGでも常に記録します。
-          </div>
-        `;
-        const anchor = kintone.app.record.getFieldElement?.('json_config');
-        if (anchor?.parentElement?.parentElement) {
-          anchor.parentElement.parentElement.insertBefore(wrap, anchor.parentElement);
-        } else {
-          document.body.appendChild(wrap);
-        }
+        document.addEventListener('click', (ev) => {
+          const t = ev.target;
+          if (!(t instanceof HTMLElement)) return;
+          if (t.id === 'tana-scan-clear') {
+            const ip = $id('tana-scan-input');
+            if (ip) { ip.value = ''; ip.focus(); }
+            const st = $id('tana-scan-status'); if (st) st.textContent = 'READY';
+          }
+        }, true);
 
-        const $in = $('#tana-scan-input');
-        const $clear = $('#tana-scan-clear');
-        const $st = $('#tana-scan-status');
+        document.addEventListener('keydown', async (ev) => {
+          const ip = $id('tana-scan-input');
+          if (!ip || ev.target !== ip || ev.key !== 'Enter') return;
 
-        let busy = false;
-
-        $clear?.addEventListener('click', () => { if ($in) { $in.value = ''; $in.focus(); } });
-        setTimeout(() => $in?.focus(), 0);
-
-        $in?.addEventListener('keydown', async (ev) => {
-          if (ev.key !== 'Enter') return;
           ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
-          if (busy) return; busy = true;
+
+          const st = $id('tana-scan-status');
+          const appId = kintone.app.getId?.();
+          const rec   = kintone.app.record.get()?.record || event.record;
+          const recId = rec?.$id?.value || kintone.app.record.getId?.();
+          if (!appId || !rec || !recId) { if (st) st.textContent = 'ERROR: no app/record'; return; }
 
           try {
-            const raw = $in?.value ?? '';
+            const raw = ip.value;
             const { at, bt, ct } = parseScan3(raw);
             const atTxt = toText(at);
             const ctIso = ct ? iso(ct) : null;
@@ -187,28 +208,27 @@
             row[COL.result] = { value: result };
             row[COL.reason] = { value: reason };
 
-            if ($st) $st.textContent = 'SAVING...';
-            if ($in) $in.value = ''; // 先にクリア
+            if (st) st.textContent = 'SAVING...';
+            ip.value = '';
 
             await appendRow(appId, recId, row);
 
-            if ($st) $st.textContent = result === 'OK' ? 'OKで記録' : `NGで記録：${reason || '一致'}`;
-            // すぐにはリロードせず、少し待ってから（拡張機能の干渉を避ける）
+            if (st) st.textContent = result === 'OK' ? 'OKで記録' : `NGで記録：${reason || '一致'}`;
             setTimeout(() => { try { location.reload(); } catch (_) {} }, 80);
 
           } catch (e) {
             console.error('[TANA] keydown error:', e);
-            if ($st) $st.textContent = 'ERROR: 保存失敗';
+            if (st) st.textContent = 'ERROR: 保存失敗';
             alert('保存に失敗しました。ネットワークまたは権限をご確認ください。');
-          } finally {
-            busy = false;
           }
-        }, { capture: true });
+        }, true);
       }
+
+      // 初回フォーカス
+      setTimeout(() => $id('tana-scan-input')?.focus(), 0);
 
     } catch (e) {
       console.error('[TANA] init error:', e);
-      // ここで例外を飲み込み、必ず画面表示を継続
     }
     return event;
   });

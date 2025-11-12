@@ -1,168 +1,217 @@
-/* TANA-OROSHI pc.js — fix-on-show + server-write v=pc-2025-11-10-13 */
+/* TANA-OROSHI pc.js — 編集画面SCAN + ドロップ判定 + サーバー保存（GET→PUT, value-only）
+   v=pc-ng-rules-2025-11-10-2 */
 (function () {
   'use strict';
 
-  const PCJS_VERSION = 'pc-2025-11-10-13';
-  console.log('[TANA-OROSHI] pc.js loaded:', PCJS_VERSION);
-  try { window.__TANA_PC_VERSION = PCJS_VERSION; } catch (_) {}
+  const VERSION = 'pc-ng-rules-2025-11-10-2';
+  console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
+  try { window.__TANA_PC_VERSION = VERSION; } catch (_) {}
 
-  // ---- デフォ列（json_config の ui.table.columns で上書き可）----
-  const DEFAULT_COLS = {
-    datetime: 'scan_at',
-    product:  'col_prod',
-    width:    'col_width',
-    length:   'col_length',
-    lot:      'col_lot',
-    label:    'col_label',
-    packs:    'col_packs',
-    rotation: 'col_rotation',
-    result:   'result',
-    reason:   'reason',
+  // ===== 固定フィールド（3項目テスト） =====
+  // 判定: a/aj（文字）, b/bj（数値）, c/cj（日付）
+  const JUDGE = {
+    text:   { value: 'a',  op: 'aj' },
+    number: { value: 'b',  op: 'bj' },
+    date:   { value: 'c',  op: 'cj' },
   };
+  // サブテーブル
+  const TABLE = 'scan_table';
+  const COL = { scanAt:'scan_at', at:'at', bt:'bt', ct:'ct', result:'result', reason:'reason' };
 
-  const byId = (id) => document.getElementById(id);
+  // ===== Utils =====
+  const $ = (id) => document.getElementById(id);
   const iso = (d) => (d ? new Date(d).toISOString() : null);
-  const asNumOrNull = (v) => {
+  const toText = (v) => (v == null ? '' : String(v));
+  const toNumOrNull = (v) => {
     const s = v == null ? '' : String(v).trim();
     return (s === '' || !/^-?\d+(\.\d+)?$/.test(s)) ? null : Number(s);
   };
-  const asTxt = (v) => (v == null ? '' : String(v));
-
-  // ---- QR パース（例: "mekkiCUPET0812vc 16 6000 51104 AA 2 1"）----
-  function parseScan(raw) {
-    const s = (raw || '').trim();
+  // YYYY-MM-DD / YYYY/MM/DD / YYYYMMDD / ISO を許容
+  function parseDateLoose(s) {
     if (!s) return null;
-    const a = s.split(/\s+/);
-    if (a.length < 7) return null;
-    const rotation = a.pop(), packs = a.pop(), label_no = a.pop(), lot_no = a.pop();
-    const length = a.pop(), width = a.pop(), product_name = a.join(' ');
-    return { product_name, width, length, lot_no, label_no, packs, rotation };
-  }
-
-  // ---- サーバーの typed 行 → value-only 行 へ再構築 ----
-  function toValueOnlyRow(rowTyped, cols) {
-    const numberCodes = new Set([cols.width, cols.length, cols.packs, cols.rotation]);
-    const out = {};
-    const rv = rowTyped?.value || {};
-
-    // この10列だけを厳密に構築（余計なキーを作らない）
-    out[cols.datetime] = { value: iso(rv[cols.datetime]?.value) };
-    out[cols.product]  = { value: asTxt(rv[cols.product]?.value) };
-    out[cols.width]    = { value: asNumOrNull(rv[cols.width]?.value) };
-    out[cols.length]   = { value: asNumOrNull(rv[cols.length]?.value) };
-    out[cols.lot]      = { value: asTxt(rv[cols.lot]?.value) };
-    out[cols.label]    = { value: asTxt(rv[cols.label]?.value) };
-    out[cols.packs]    = { value: asNumOrNull(rv[cols.packs]?.value) };
-    out[cols.rotation] = { value: asNumOrNull(rv[cols.rotation]?.value) };
-    out[cols.result]   = { value: asTxt(rv[cols.result]?.value) };
-    out[cols.reason]   = { value: asTxt(rv[cols.reason]?.value) };
-
-    // number は null / text は '' / datetime は ISO or null
-    for (const [code, cell] of Object.entries(out)) {
-      if (numberCodes.has(code)) {
-        if (cell.value === '') cell.value = null;
-      } else if (code === cols.datetime) {
-        if (!cell.value) cell.value = null;
-      } else {
-        if (cell.value == null) cell.value = '';
-      }
+    const str = String(s).trim();
+    if (/^\d{8}$/.test(str)) { // YYYYMMDD
+      const y = +str.slice(0,4), m = +str.slice(4,6)-1, d = +str.slice(6,8);
+      const dt = new Date(y, m, d);
+      return Number.isNaN(dt.getTime()) ? null : dt;
     }
-    return { value: out };
+    const dt = new Date(str.replace(/\//g, '-'));
+    return Number.isNaN(dt.getTime()) ? null : dt;
   }
 
-  // ---- サーバーに 1 行追記（GET→PUT、UI には set() しない）----
-  async function appendRowToServer(appId, recId, cols, tableCode, data) {
+  // ドロップ値 → 内部コード
+  function normalizeOp(kind, s) {
+    const t = (s || '').trim();
+    if (kind === 'text') {
+      if (['まったく同じ','完全一致','==','equals'].includes(t)) return 'eq';
+      if (['含む','contains'].includes(t)) return 'contains';
+      if (['含まない','notContains'].includes(t)) return 'notContains';
+      if (['前方一致','前部一致','startsWith'].includes(t)) return 'starts';
+      if (['後方一致','endsWith'].includes(t)) return 'ends';
+      return '';
+    }
+    if (kind === 'number') {
+      if (['同じ','==','equals'].includes(t)) return 'eq';
+      if (['異なる','!=','not'].includes(t)) return 'ne';
+      if (['以上','>='].includes(t)) return 'gte';
+      if (['以下','<='].includes(t)) return 'lte';
+      if (['未満','<'].includes(t)) return 'lt';
+      if (['より大きい','>','超'].includes(t)) return 'gt';
+      return '';
+    }
+    if (kind === 'date') {
+      if (['同じ','=='].includes(t)) return 'eq';
+      if (['以外','!='].includes(t)) return 'ne';
+      if (['以降','>='].includes(t)) return 'gte';
+      if (['以前','<='].includes(t)) return 'lte';
+      return '';
+    }
+    return '';
+  }
+
+  // NG 判定（true=NG）。未設定は常に false（判定しない）
+  function isNG_text(v, op, base) {
+    if (!op || base === '') return false;
+    const s = toText(v), b = toText(base);
+    if (op === 'eq') return s === b;
+    if (op === 'contains') return s.includes(b);
+    if (op === 'notContains') return !s.includes(b);
+    if (op === 'starts') return s.startsWith(b);
+    if (op === 'ends') return s.endsWith(b);
+    return false;
+  }
+  function isNG_number(v, op, base) {
+    const s = toNumOrNull(v), b = toNumOrNull(base);
+    if (!op || b == null || s == null) return false;
+    if (op === 'eq')  return s === b;
+    if (op === 'ne')  return s !== b;
+    if (op === 'gte') return s >= b;
+    if (op === 'lte') return s <= b;
+    if (op === 'lt')  return s <  b;
+    if (op === 'gt')  return s >  b;
+    return false;
+  }
+  function isNG_date(v, op, base) {
+    const s = v instanceof Date ? v : parseDateLoose(v);
+    const b = base instanceof Date ? base : parseDateLoose(base);
+    if (!op || !s || !b) return false;
+    const sv = s.getTime(), bv = b.getTime();
+    if (op === 'eq')  return sv === bv;
+    if (op === 'ne')  return sv !== bv;
+    if (op === 'gte') return sv >= bv; // 以降
+    if (op === 'lte') return sv <= bv; // 以前
+    return false;
+  }
+
+  // API: サブテーブルへ value-only 行を追加（GET→PUT）
+  async function appendRow(appId, recId, rowValueOnly) {
     const url = kintone.api.url('/k/v1/record.json', true);
-
-    // GET：最新のサブテーブル（typed）
     const { record } = await kintone.api(url, 'GET', { app: appId, id: recId });
-    const curr = Array.isArray(record[tableCode]?.value) ? record[tableCode].value : [];
-
-    // value-only 新規行
-    const nextRow = {
-      value: {
-        [cols.datetime]: { value: iso(new Date()) },
-        [cols.product]:  { value: asTxt(data.product_name) },
-        [cols.width]:    { value: asNumOrNull(data.width) },
-        [cols.length]:   { value: asNumOrNull(data.length) },
-        [cols.lot]:      { value: asTxt(data.lot_no) },
-        [cols.label]:    { value: asTxt(data.label_no) },
-        [cols.packs]:    { value: asNumOrNull(data.packs) },
-        [cols.rotation]: { value: asNumOrNull(data.rotation) },
-        [cols.result]:   { value: '' },
-        [cols.reason]:   { value: '' },
-      }
-    };
-
-    // PUT：value-only で丸ごと保存
-    const body = { app: appId, id: recId, record: { [tableCode]: { value: curr.concat([nextRow]) } } };
-    await kintone.api(url, 'PUT', body);
+    const curr = Array.isArray(record[TABLE]?.value) ? record[TABLE].value : [];
+    const next = curr.concat([{ value: rowValueOnly }]);
+    await kintone.api(url, 'PUT', { app: appId, id: recId, record: { [TABLE]: { value: next } } });
   }
 
-  // ---- 編集画面（表示）— 赤バナー対策：サーバーから取り直して value-only で返す ----
-  kintone.events.on('app.record.edit.show', async (event) => {
-    const r = event.record;
+  // SCAN 文字列 → {at, bt, ct}
+  function parseScan3(raw) {
+    const a = String(raw || '').trim().split(/\s+/).filter(Boolean);
+    const text = a[0] || '';
+    const num  = a.length > 1 ? toNumOrNull(a[1]) : null;
+    const date = a.length > 2 ? parseDateLoose(a[2]) : null;
+    return { at: text, bt: num, ct: date };
+  }
 
-    // config
-    let cfg = {};
-    try { cfg = JSON.parse(r?.json_config?.value || '{}'); } catch (_) { cfg = {}; }
-    const cols = Object.assign({}, DEFAULT_COLS, (cfg?.ui?.table?.columns || {}));
-    const tableCode = cfg?.ui?.table?.fieldCode || 'scan_table';
-
-    // サーバーの “正” データを取得（typed）→ value-only に再構築して event に適用
+  // ===== 編集画面 =====
+  kintone.events.on('app.record.edit.show', (event) => {
+    const rec = event.record;
     const appId = kintone.app.getId();
-    const recId = r.$id?.value;
-    if (appId && recId) {
-      const url = kintone.api.url('/k/v1/record.json', true);
-      const { record } = await kintone.api(url, 'GET', { app: appId, id: recId });
-      const typedRows = Array.isArray(record[tableCode]?.value) ? record[tableCode].value : [];
-      event.record[tableCode].value = typedRows.map(row => toValueOnlyRow(row, cols));
-    }
+    const recId = rec.$id?.value || kintone.app.record.getId();
 
-    // SCAN UI（サーバー直書き＋リロード）
-    if (!byId('tana-scan')) {
+    // SCAN UI（一度だけ）
+    if (!$('#tana-scan-wrap')) {
       const wrap = document.createElement('div');
-      wrap.style.margin = '8px 0 16px';
-      const label = document.createElement('span');
-      label.textContent = 'SCAN';
-      label.style.marginRight = '8px';
-      const input = document.createElement('input');
-      input.id = 'tana-scan';
-      input.type = 'text';
-      input.placeholder = 'ここにスキャン（Enterで追記→自動更新）';
-      input.autocomplete = 'off';
-      input.style.cssText = 'width:420px;padding:6px 8px;border:1px solid #ccc;border-radius:6px;';
-      const clearBtn = document.createElement('button');
-      clearBtn.textContent = 'クリア';
-      clearBtn.style.cssText = 'margin-left:8px;padding:6px 12px;';
-      clearBtn.onclick = () => { input.value = ''; input.focus(); };
-
-      wrap.appendChild(label); wrap.appendChild(input); wrap.appendChild(clearBtn);
-
-      const jsonFieldEl = kintone.app.record.getFieldElement('json_config');
-      if (jsonFieldEl && jsonFieldEl.parentElement) {
-        jsonFieldEl.parentElement.parentElement.insertBefore(wrap, jsonFieldEl.parentElement);
+      wrap.id = 'tana-scan-wrap';
+      wrap.style.cssText = 'margin:10px 0 16px;padding:10px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
+      wrap.innerHTML = `
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <strong>SCAN</strong>
+          <input id="tana-scan-input" type="text" autocomplete="off"
+            placeholder="(文字) (数値) (日時) の順に入力 → Enter"
+            style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
+          <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
+          <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY</span>
+        </div>
+        <div style="margin-top:6px;color:#64748b;font-size:12px">
+          NG条件：a/aj・b/bj・c/cj。未選択や基準空は判定対象外。NGでも常に記録します。
+        </div>
+      `;
+      const jsonEl = kintone.app.record.getFieldElement('json_config');
+      if (jsonEl && jsonEl.parentElement && jsonEl.parentElement.parentElement) {
+        jsonEl.parentElement.parentElement.insertBefore(wrap, jsonEl.parentElement);
       } else {
         document.body.appendChild(wrap);
       }
 
-      input.addEventListener('keydown', async (ev) => {
+      const $in = $('#tana-scan-input');
+      const $clear = $('#tana-scan-clear');
+      const $st = $('#tana-scan-status');
+
+      $clear.onclick = () => { $in.value = ''; $in.focus(); };
+      setTimeout(() => $in.focus(), 0);
+
+      $in.addEventListener('keydown', async (ev) => {
         if (ev.key !== 'Enter') return;
         ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
+        if (!appId || !recId) { alert('レコードIDが取得できません（保存済みレコードでお試しください）'); return; }
 
-        const parsed = parseScan(input.value);
-        if (!parsed) { alert('スキャン形式が不正です。例: mekkiCUPET0812vc 16 6000 51104 AA 2 1'); return; }
+        const { at, bt, ct } = parseScan3($in.value);
+        const atTxt = toText(at);
+        const ctIso = ct ? iso(ct) : null;
+
+        // 判定入力（基準値＆オペレータ：単票の値を使う）
+        const aVal = rec[JUDGE.text.value]?.value ?? '';
+        const aOp  = rec[JUDGE.text.op   ]?.value ?? '';
+        const bVal = rec[JUDGE.number.value]?.value ?? '';
+        const bOp  = rec[JUDGE.number.op   ]?.value ?? '';
+        const cVal = rec[JUDGE.date.value]?.value ?? '';
+        const cOp  = rec[JUDGE.date.op   ]?.value ?? '';
+
+        const ngA = isNG_text(  atTxt,  normalizeOp('text',   aOp), aVal);
+        const ngB = isNG_number(bt,     normalizeOp('number', bOp), bVal);
+        const ngC = isNG_date(  ct,     normalizeOp('date',   cOp), cVal);
+
+        const reasons = [];
+        if (ngA) reasons.push(`a:${aOp}`);
+        if (ngB) reasons.push(`b:${bOp}`);
+        if (ngC) reasons.push(`c:${cOp}`);
+
+        const result = (ngA || ngB || ngC) ? 'NG' : 'OK';
+        const reason = reasons.join(' / ');
+
+        const row = {};
+        row[COL.scanAt] = { value: iso(new Date()) };
+        row[COL.at]     = { value: atTxt };
+        row[COL.bt]     = { value: bt };           // NUMBER は null 可
+        row[COL.ct]     = { value: ctIso };        // DATETIME は null 可
+        row[COL.result] = { value: result };
+        row[COL.reason] = { value: reason };
 
         try {
-          await appendRowToServer(appId, recId, cols, tableCode, parsed);
-          location.reload(); // 上書きが反映された画面を再読込
+          $st.textContent = 'SAVING...';
+          await appendRow(appId, recId, row);
+          $st.textContent = result === 'OK' ? 'OKで記録' : `NGで記録：${reason || '一致'}`;
+          // UIへ set() せず画面全体を更新（赤バナー予防）
+          location.reload();
         } catch (e) {
           console.error(e);
+          $st.textContent = 'ERROR: 保存失敗';
           alert('保存に失敗しました。ネットワークまたは権限をご確認ください。');
+        } finally {
+          $in.value = '';
         }
       }, { capture: true });
     }
 
-    return event; // ← value-only で返すため、赤バナーが出ません
+    return event; // ← event.record は変更しない
   });
 })();

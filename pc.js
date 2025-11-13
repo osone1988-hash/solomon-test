@@ -1,17 +1,17 @@
-/* TANA-OROSHI pc.js — 編集画面SCAN + ドロップ判定（イベント委譲で確実動作）
-   v=pc-ng-rules-2025-11-10-5 */
+/* TANA-OROSHI pc.js — 編集画面SCAN + ドロップ判定（OK条件方式・複数理由）
+   v=pc-ng-rules-2025-11-10-6 */
 (function () {
   'use strict';
 
-  const VERSION = 'pc-ng-rules-2025-11-10-5';
+  const VERSION = 'pc-ng-rules-2025-11-10-6';
   try { console.log('[TANA-OROSHI] pc.js loaded:', VERSION); window.__TANA_PC_VERSION = VERSION; } catch (_) {}
 
-  // ===== 設計（フィールド） =====
-  // 判定基準（値）とオペレータ（ドロップ）の対応
+  // ===== フィールド設定 =====
+  // 基準値フィールド & オペレータ(ドロップ)の対応
   const JUDGE = {
-    text:   { value: 'a',  op: 'aj' },
-    number: { value: 'b',  op: 'bj' },
-    date:   { value: 'c',  op: 'cj' },
+    text:   { value: 'a',  op: 'aj' }, // 文字
+    number: { value: 'b',  op: 'bj' }, // 数値
+    date:   { value: 'c',  op: 'cj' }, // 日時
   };
   // サブテーブル
   const TABLE = 'scan_table';
@@ -32,6 +32,7 @@
     const dt = new Date(str.replace(/\//g, '-'));
     return Number.isNaN(dt.getTime()) ? null : dt;
   }
+  // ドロップ値を内部コードへ
   function normalizeOp(kind, s) {
     const t = (s || '').trim();
     if (kind === 'text') {
@@ -39,7 +40,7 @@
       if (['含む','contains'].includes(t)) return 'contains';
       if (['含まない','notContains'].includes(t)) return 'notContains';
       if (['前方一致','前部一致','startsWith'].includes(t)) return 'starts';
-      if (['後方一致','endsWith'].includes(t)) return 'ends';
+      if (['後部一致','後方一致','endsWith'].includes(t)) return 'ends';
       return '';
     }
     if (kind === 'number') {
@@ -60,37 +61,39 @@
     }
     return '';
   }
-  function isNG_text(v, op, base) {
-    if (!op || base === '') return false;
+
+  // ▼ここがポイント：ドロップは「OK条件」。満たさない時に NG とする
+  function ok_text(v, op, base) {
     const s = toText(v), b = toText(base);
-    if (op === 'eq') return s === b;
-    if (op === 'contains') return s.includes(b);
-    if (op === 'notContains') return !s.includes(b);
-    if (op === 'starts') return s.startsWith(b);
-    if (op === 'ends') return s.endsWith(b);
-    return false;
+    if (!op || b === '') return true;
+    if (op === 'eq')         return s === b;
+    if (op === 'contains')   return s.includes(b);
+    if (op === 'notContains')return !s.includes(b);
+    if (op === 'starts')     return s.startsWith(b);
+    if (op === 'ends')       return s.endsWith(b);
+    return true;
   }
-  function isNG_number(v, op, base) {
+  function ok_number(v, op, base) {
     const s = toNumOrNull(v), b = toNumOrNull(base);
-    if (!op || b == null || s == null) return false;
+    if (!op || b == null || s == null) return true;
     if (op === 'eq')  return s === b;
     if (op === 'ne')  return s !== b;
     if (op === 'gte') return s >= b;
     if (op === 'lte') return s <= b;
     if (op === 'lt')  return s <  b;
     if (op === 'gt')  return s >  b;
-    return false;
+    return true;
   }
-  function isNG_date(v, op, base) {
+  function ok_date(v, op, base) {
     const s = v instanceof Date ? v : parseDateLoose(v);
     const b = base instanceof Date ? base : parseDateLoose(base);
-    if (!op || !s || !b) return false;
+    if (!op || !s || !b) return true;
     const sv = s.getTime(), bv = b.getTime();
     if (op === 'eq')  return sv === bv;
     if (op === 'ne')  return sv !== bv;
     if (op === 'gte') return sv >= bv; // 以降
     if (op === 'lte') return sv <= bv; // 以前
-    return false;
+    return true;
   }
 
   async function appendRow(appId, recId, rowValueOnly) {
@@ -109,9 +112,10 @@
     return { at: text, bt: num, ct: date };
   }
 
-  // ===== UI 作成（a～c の下に配置） =====
+  // ===== SCAN UI（a〜c直下に配置：jsonの直前 or サブテーブルの直前） =====
   function ensureScanUI() {
-    if ($id('tana-scan-wrap')) return;
+    // 既存を消してから作る（位置ぶれ防止）
+    const old = $id('tana-scan-wrap'); if (old) old.remove();
 
     const wrap = document.createElement('div');
     wrap.id = 'tana-scan-wrap';
@@ -127,21 +131,18 @@
       </div>
     `;
 
-    // アンカー：c / cj の近辺（判定UIの直下）
-    const anchorC  = kintone.app.record.getFieldElement?.(JUDGE.date.value);
-    const anchorCJ = kintone.app.record.getFieldElement?.(JUDGE.date.op);
-    const insertTo = (anchorCJ?.parentElement?.parentElement) || (anchorC?.parentElement?.parentElement);
+    // 最優先：json_config の直前
+    const jsonEl  = kintone.app.record.getFieldElement?.('json_config');
+    const tableEl = kintone.app.record.getFieldElement?.(TABLE);
 
-    if (insertTo?.parentElement) {
-      insertTo.parentElement.insertBefore(wrap, insertTo.nextSibling); // cのブロック直下
+    if (jsonEl?.parentElement?.parentElement?.parentElement) {
+      const block = jsonEl.parentElement.parentElement.parentElement; // json の外枠
+      block.parentElement.insertBefore(wrap, block); // 直前に入れる
+    } else if (tableEl?.parentElement?.parentElement?.parentElement) {
+      const block = tableEl.parentElement.parentElement.parentElement; // table の外枠
+      block.parentElement.insertBefore(wrap, block); // table の直前
     } else {
-      // 最後の手段：json_config の前
-      const jsonEl = kintone.app.record.getFieldElement?.('json_config');
-      if (jsonEl?.parentElement?.parentElement) {
-        jsonEl.parentElement.parentElement.insertBefore(wrap, jsonEl.parentElement);
-      } else {
-        document.body.appendChild(wrap);
-      }
+      document.body.appendChild(wrap); // 最終手段
     }
   }
 
@@ -149,7 +150,7 @@
   kintone.events.on('app.record.edit.show', (event) => {
     try {
       ensureScanUI();
-      // ドキュメント委譲：再描画されても常に届く
+
       if (!window.__TANA_SCAN_BOUND__) {
         window.__TANA_SCAN_BOUND__ = true;
 
@@ -166,7 +167,6 @@
         document.addEventListener('keydown', async (ev) => {
           const ip = $id('tana-scan-input');
           if (!ip || ev.target !== ip || ev.key !== 'Enter') return;
-
           ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
 
           const st = $id('tana-scan-status');
@@ -188,9 +188,12 @@
             const cVal = rec[JUDGE.date.value ]?.value ?? '';
             const cOp  = rec[JUDGE.date.op    ]?.value ?? '';
 
-            const ngA = isNG_text(  atTxt,  normalizeOp('text',   aOp), aVal);
-            const ngB = isNG_number(bt,     normalizeOp('number', bOp), bVal);
-            const ngC = isNG_date(  ct,     normalizeOp('date',   cOp), cVal);
+            // OK条件 → 満たさないと NG
+            const okA = ok_text(  atTxt,  normalizeOp('text',   aOp), aVal);
+            const okB = ok_number(bt,     normalizeOp('number', bOp), bVal);
+            const okC = ok_date(  ct,     normalizeOp('date',   cOp), cVal);
+
+            const ngA = !okA, ngB = !okB, ngC = !okC;
 
             const reasons = [];
             if (ngA) reasons.push(`a:${aOp}`);
@@ -213,7 +216,7 @@
 
             await appendRow(appId, recId, row);
 
-            if (st) st.textContent = result === 'OK' ? 'OKで記録' : `NGで記録：${reason || '一致'}`;
+            if (st) st.textContent = result === 'OK' ? 'OKで記録' : `NGで記録：${reason || '不一致'}`;
             setTimeout(() => { try { location.reload(); } catch (_) {} }, 80);
 
           } catch (e) {
@@ -224,7 +227,6 @@
         }, true);
       }
 
-      // 初回フォーカス
       setTimeout(() => $id('tana-scan-input')?.focus(), 0);
 
     } catch (e) {

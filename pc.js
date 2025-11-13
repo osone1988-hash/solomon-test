@@ -1,9 +1,8 @@
-/* TANA-OROSHI pc.js — SCANを Space(scan_area) へ固定 / OK条件方式・複数理由 / 重複防止
-   数値(b)の値取得をフォールバックで強化
-   v=pc-ng-rules-2025-11-10-12 */
+/* TANA-OROSHI pc.js — scan_area固定 / 数値ラベル直判定 / 理由に値併記 / 自動リロード廃止
+   v=pc-ng-rules-2025-11-10-13 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-10-12';
+  const VERSION = 'pc-ng-rules-2025-11-10-13';
   try { console.log('[TANA-OROSHI] pc.js loaded:', VERSION); window.__TANA_PC_VERSION = VERSION; } catch(_) {}
 
   // ---- 判定フィールド ----
@@ -22,166 +21,89 @@
 
   // ===== Utils =====
   const $id = (id) => document.getElementById(id);
+  const S   = (v) => (v == null ? '' : String(v));
   const iso = (d) => (d ? new Date(d).toISOString() : null);
-  const S   = (v) => (v==null ? '' : String(v).trim());
 
   function toNumOrNull(v){
-    const s=S(v);
-    if (!s) return null;
-    if (!/^-?\d+(?:\.\d+)?$/.test(s)) return null;
+    const s = S(v).trim();
+    if (!s || !/^-?\d+(?:\.\d+)?$/.test(s)) return null;
     const n = Number(s);
     return Number.isFinite(n) ? n : null;
   }
   function parseDateLoose(s){
     if (!s) return null;
-    const str=S(s);
-    if (/^\d{8}$/.test(str)) { // 20251109
-      const y=+str.slice(0,4), m=+str.slice(4,6)-1, d=+str.slice(6,8);
+    const t = S(s).trim();
+    if (/^\d{8}$/.test(t)) { // 20251109
+      const y=+t.slice(0,4), m=+t.slice(4,6)-1, d=+t.slice(6,8);
       const dt=new Date(y,m,d);
       return Number.isNaN(dt.getTime()) ? null : dt;
     }
-    const dt=new Date(str.replace(/\//g,'-'));
+    const dt=new Date(t.replace(/\//g,'-'));
     return Number.isNaN(dt.getTime()) ? null : dt;
   }
 
-  // ---- 演算子の正規化（日本語/記号/英語コード 全対応）----
-  function normalizeOp(kind, raw){
-    const t0 = (raw || '').trim();
-    const t  = t0.toLowerCase().replace(/\s+/g,'');
-    if (kind==='text'){
-      const map = {
-        '==':'eq','equals':'eq','まったく同じ':'eq','完全一致':'eq',
-        'contains':'contains','含む':'contains',
-        'notcontains':'notContains','含まない':'notContains',
-        'startswith':'starts','前方一致':'starts','前部一致':'starts',
-        'endswith':'ends','後方一致':'ends','後部一致':'ends'
-      };
-      return map[t] || '';
-    }
-    if (kind==='number'){
-      const map = {
-        '==':'eq','equals':'eq','eq':'eq','同じ':'eq',
-        '!=':'ne','notequals':'ne','ne':'ne','異なる':'ne',
-        '>=':'gte','≧':'gte','gte':'gte','以上':'gte',
-        '<=':'lte','≦':'lte','lte':'lte','以下':'lte',
-        '<':'lt','lt':'lt','未満':'lt',
-        '>':'gt','gt':'gt','より大きい':'gt'
-      };
-      return map[t] || '';
-    }
-    if (kind==='date'){
-      const map = {
-        '==':'eq','eq':'eq','同じ':'eq',
-        '!=':'ne','ne':'ne','以外':'ne',
-        '>=':'gte','gte':'gte','以降':'gte',
-        '<=':'lte','lte':'lte','以前':'lte'
-      };
-      return map[t] || '';
-    }
-    return '';
-  }
-
-  // 「OK条件」を満たさなければ NG
-  const ok_text=(v,op,base)=>{
+  // 「OK条件」を満たさなければ NG（テキスト/数値/日時）
+  const ok_text = (v, label, base) => {
     const s=S(v), b=S(base);
-    if(!op||b==='') return true;
-    if(op==='eq') return s===b;
-    if(op==='contains') return s.includes(b);
-    if(op==='notContains') return !s.includes(b);
-    if(op==='starts') return s.startsWith(b);
-    if(op==='ends')   return s.endsWith(b);
+    if (!label || b==='') return true;
+    if (label.includes('まったく同じ') || label.includes('完全一致') || label==='==' || label==='equals') return s===b;
+    if (label.includes('含む'))      return s.includes(b);
+    if (label.includes('含まない'))  return !s.includes(b);
+    if ((label.includes('前')&&label.includes('一致'))) return s.startsWith(b);
+    if ((label.includes('後')&&label.includes('一致'))) return s.endsWith(b);
     return true;
   };
-  const ok_number=(v,op,base)=>{
-    const s=toNumOrNull(v), b=toNumOrNull(base);
-    if(!op) return true;
-    if(b==null || s==null) return false; // ★ どちらか欠落は NG とする（設定漏れや取得失敗を顕在化）
-    if(op==='eq')  return s===b;
-    if(op==='ne')  return s!==b;
-    if(op==='gte') return s>=b; // 以上
-    if(op==='lte') return s<=b; // 以下
-    if(op==='lt')  return s< b; // 未満
-    if(op==='gt')  return s> b; // より大きい
+  const ok_number = (scan, label, base) => {
+    const s=toNumOrNull(scan), b=toNumOrNull(base);
+    if (!label) return true;
+    if (s==null || b==null) return false; // ★値取れない時はNG
+    if (label.includes('同じ') || label==='==' || label==='equals') return s===b;
+    if (label.includes('異なる') || label==='!=')                    return s!==b;
+    if (label.includes('以上') || label.includes('>='))               return s>=b;
+    if (label.includes('以下') || label.includes('<='))               return s<=b;
+    if (label.includes('未満') || label==='<')                        return s< b;
+    if (label.includes('より大き') || label==='>')                    return s> b;
     return true;
   };
-  const ok_date=(v,op,base)=>{
+  const ok_date = (v, label, base) => {
     const sv = v instanceof Date ? v : parseDateLoose(v);
     const bv = base instanceof Date ? base : parseDateLoose(base);
-    if(!op||!sv||!bv) return true;
+    if (!label || !sv || !bv) return true;
     const s=sv.getTime(), b=bv.getTime();
-    if(op==='eq')  return s===b;
-    if(op==='ne')  return s!==b;
-    if(op==='gte') return s>=b; // 以降
-    if(op==='lte') return s<=b; // 以前
+    if (label.includes('同じ') || label==='==') return s===b;
+    if (label.includes('以外') || label==='!=') return s!==b;
+    if (label.includes('以降') || label.includes('>=')) return s>=b;
+    if (label.includes('以前') || label.includes('<=')) return s<=b;
     return true;
   };
 
-  // ---- b の値を堅牢に取得（rec.b → 無ければ最初の NUMBER フィールド）----
-  function resolveRuleNumberValue(rec){
-    // 1) 指定コード
-    const direct = rec[JUDGE.number.value]?.value;
-    if (S(direct) !== '') return { code: JUDGE.number.value, value: direct };
+  async function putRowAndRefreshView(appId, recId, rowValueOnly){
+    // 現在のレコード取得
+    const url = kintone.api.url('/k/v1/record.json', true);
+    const { record } = await kintone.api(url,'GET',{ app:appId, id:recId });
 
-    // 2) フォールバック：トップレベルの NUMBER を走査（サブテーブル除外）
-    for (const [code, f] of Object.entries(rec)) {
-      if (!f || code === TABLE) continue; // サブテーブル避け
-      if (f.type === 'NUMBER' && S(f.value) !== '') {
-        return { code, value: f.value };
-      }
-    }
-    return { code: JUDGE.number.value, value: '' }; // 取得失敗
+    // 1行追加（value-only）
+    const curr = Array.isArray(record[TABLE]?.value) ? record[TABLE].value : [];
+    const next = curr.concat([{ value: rowValueOnly }]);
+    await kintone.api(url,'PUT',{ app:appId, id:recId, record: { [TABLE]: { value: next } } });
+
+    // 反映用に再取得 → 画面へ反映（ページリロードなし）
+    const res2 = await kintone.api(url,'GET',{ app:appId, id:recId });
+    kintone.app.record.set({ record: res2.record });
   }
 
-  async function appendRow(appId, recId, rowValueOnly){
-    const url=kintone.api.url('/k/v1/record.json', true);
-    const {record}=await kintone.api(url,'GET',{app:appId,id:recId});
-    const curr=Array.isArray(record[TABLE]?.value)?record[TABLE].value:[];
-    const next=curr.concat([{value:rowValueOnly}]);
-    await kintone.api(url,'PUT',{app:appId,id:recId,record:{[TABLE]:{value:next}}});
-  }
-
-  // 入力: 文字 数値 日時…以降は結合
+  // 入力: 文字 数値 日時…以降は結合（例: "2025-11-09 09:00"）
   function parseScan3(raw){
-    const a=S(raw).split(/\s+/).filter(Boolean);
-    const at=a[0]||'';
-    const bt=a.length>1? toNumOrNull(a[1]) : null;
-    const dt=a.length>2? parseDateLoose(a.slice(2).join(' ')) : null;
-    return {at, bt, ct:dt};
+    const a = S(raw).trim().split(/\s+/).filter(Boolean);
+    const at = a.shift() || '';
+    const bt = toNumOrNull(a[0]); if (a.length) a.shift();
+    const ct = a.length ? parseDateLoose(a.join(' ')) : null;
+    return { at, bt, ct };
   }
 
   // ---- SCAN UI（scan_area 最優先）----
   function ensureScanUI(){
-    document.querySelectorAll('#tana-scan-wrap').forEach(n=>n.remove()); // 重複防止
-
-    let anchor = kintone.app.record.getSpaceElement?.(SCAN_SPACE_ID);
-    let place = 'space:'+SCAN_SPACE_ID;
-
-    if (!anchor) {
-      const cjEl = kintone.app.record.getFieldElement?.(JUDGE.date.op);
-      if (cjEl && cjEl.parentElement && cjEl.parentElement.parentElement) {
-        const row=cjEl.parentElement.parentElement;
-        anchor=document.getElementById('tana-scan-anchor')||document.createElement('div');
-        anchor.id='tana-scan-anchor';
-        row.parentElement.insertBefore(anchor,row.nextSibling);
-        place='after_cj';
-      }
-    }
-    if (!anchor) {
-      const jsonEl=kintone.app.record.getFieldElement?.('json_config');
-      if (jsonEl && jsonEl.parentElement && jsonEl.parentElement.parentElement) {
-        anchor=document.getElementById('tana-scan-anchor')||document.createElement('div');
-        anchor.id='tana-scan-anchor';
-        jsonEl.parentElement.parentElement.insertBefore(anchor,jsonEl.parentElement);
-        place='before_json';
-      }
-    }
-    if (!anchor) {
-      anchor=document.getElementById('tana-scan-anchor')||document.createElement('div');
-      anchor.id='tana-scan-anchor';
-      document.body.appendChild(anchor);
-      place='body';
-    }
-
+    document.querySelectorAll('#tana-scan-wrap').forEach(n=>n.remove()); // 複製防止
     const wrap=document.createElement('div');
     wrap.id='tana-scan-wrap';
     wrap.style.cssText='margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
@@ -192,73 +114,85 @@
                placeholder="(文字) (数値) (日時) の順に入力 → Enter"
                style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
         <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
-        <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY (${place})</span>
+        <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY</span>
       </div>`;
-    anchor.appendChild(wrap);
+
+    const space = kintone.app.record.getSpaceElement?.(SCAN_SPACE_ID);
+    if (space) { space.innerHTML=''; space.appendChild(wrap); return 'space:'+SCAN_SPACE_ID; }
+
+    const cjEl = kintone.app.record.getFieldElement?.(JUDGE.date.op);
+    if (cjEl && cjEl.parentElement && cjEl.parentElement.parentElement) {
+      const row=cjEl.parentElement.parentElement;
+      row.parentElement.insertBefore(wrap,row.nextSibling);
+      return 'after_cj';
+    }
+
+    const tableEl = kintone.app.record.getFieldElement?.(TABLE);
+    if (tableEl && tableEl.parentElement && tableEl.parentElement.parentElement) {
+      const block = tableEl.parentElement.parentElement;
+      block.parentElement.insertBefore(wrap, block);
+      return 'before_table';
+    }
+
+    document.body.appendChild(wrap);
+    return 'body_fallback';
   }
 
-  // ---- 画面イベント ----
   kintone.events.on('app.record.edit.show', (event)=>{
     try{
-      ensureScanUI();
+      const where = ensureScanUI();
+      const st0 = $id('tana-scan-status'); if (st0) st0.textContent = `READY (${where})`;
 
-      if(!window.__TANA_SCAN_BOUND__){
-        window.__TANA_SCAN_BOUND__=true;
+      if (!window.__TANA_SCAN_BOUND__){
+        window.__TANA_SCAN_BOUND__ = true;
 
         document.addEventListener('click',(ev)=>{
           const t=ev.target; if(!(t instanceof HTMLElement)) return;
-          if(t.id==='tana-scan-clear'){
-            const ip=$id('tana-scan-input'); if(ip){ ip.value=''; ip.focus(); }
-            const st=$id('tana-scan-status'); if(st) st.textContent='READY';
+          if (t.id==='tana-scan-clear'){
+            const ip=$id('tana-scan-input'); if (ip) { ip.value=''; ip.focus(); }
+            const st=$id('tana-scan-status'); if (st) st.textContent='READY';
           }
         },true);
 
         document.addEventListener('keydown', async (ev)=>{
           const ip=$id('tana-scan-input');
-          if(!ip || ev.target!==ip || ev.key!=='Enter') return;
+          if (!ip || ev.target!==ip || ev.key!=='Enter') return;
           ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
 
           const st=$id('tana-scan-status');
           const appId=kintone.app.getId?.();
-          const recAll=kintone.app.record.get();
-          const rec=recAll?.record || event.record;
+          const recWrap=kintone.app.record.get();
+          const rec=recWrap?.record || event.record;
           const recId=rec?.$id?.value || kintone.app.record.getId?.();
-          if(!appId||!rec||!recId){ if(st) st.textContent='ERROR: no app/record'; return; }
+          if (!appId || !rec || !recId) { if (st) st.textContent='ERROR: no app/record'; return; }
 
           try{
-            const raw=ip.value;
-            const {at, bt, ct}=parseScan3(raw);
+            const { at, bt, ct } = parseScan3(ip.value);
             const atTxt=S(at);
             const btNum=bt;
             const ctIso=ct? iso(ct): null;
 
-            // ルール値の解決（b はフォールバック付き）
-            const aVal=rec[JUDGE.text.value ]?.value ?? '';
-            const aOpR=rec[JUDGE.text.op    ]?.value ?? '';
-            const cVal=rec[JUDGE.date.value ]?.value ?? '';
-            const cOpR=rec[JUDGE.date.op    ]?.value ?? '';
+            // 画面上の条件値
+            const aVal = rec[JUDGE.text.value ]?.value ?? '';
+            const aOp  = rec[JUDGE.text.op    ]?.value ?? '';
+            const bVal = rec[JUDGE.number.value]?.value ?? '';
+            const bOp  = rec[JUDGE.number.op   ]?.value ?? '';
+            const cVal = rec[JUDGE.date.value ]?.value ?? '';
+            const cOp  = rec[JUDGE.date.op    ]?.value ?? '';
 
-            const { code: bCodeResolved, value: bValResolved } = resolveRuleNumberValue(rec);
-            const bOpR=rec[JUDGE.number.op]?.value ?? '';
-
-            const aOp=normalizeOp('text',   aOpR);
-            const bOp=normalizeOp('number', bOpR);
-            const cOp=normalizeOp('date',   cOpR);
-
-            // デバッグ出力：b の取得状況
-            try{ console.debug('[TANA][B-resolve]', { bCodeResolved, bValResolved, bOpRaw:bOpR, bOpNorm:bOp, scanBt:btNum }); }catch(_){}
-
-            const okA=ok_text(atTxt, aOp, aVal);
-            const okB=ok_number(btNum, bOp, bValResolved);
-            const okC=ok_date(ct, cOp, cVal);
+            // 判定
+            const okA = ok_text(atTxt, aOp, aVal);
+            const okB = ok_number(btNum, bOp, bVal);
+            const okC = ok_date(ct, cOp, cVal);
 
             const reasons=[];
-            if(!okA) reasons.push(`a:${aOpR||'-'}`);
-            if(!okB) reasons.push(`b:${bOpR||'-'}`);
-            if(!okC) reasons.push(`c:${cOpR||'-'}`);
+            if(!okA) reasons.push(`a:${aOp||'-'}`);
+            if(!okB) reasons.push(`b:${bOp||'-'} (scan:${btNum==null?'null':String(btNum)}, base:${bVal==null?'null':String(bVal)})`);
+            if(!okC) reasons.push(`c:${cOp||'-'}`);
 
             const result=reasons.length? 'NG':'OK';
 
+            // value-only 行
             const row={};
             row[COL.scanAt]={ value: iso(new Date()) };
             row[COL.at]    ={ value: atTxt };
@@ -267,20 +201,24 @@
             row[COL.result]={ value: result };
             row[COL.reason]={ value: reasons.join(' / ') };
 
-            if(st) st.textContent='SAVING...';
+            if(st) st.textContent = `判定中…  a:[${aOp}] b:[${bOp}] c:[${cOp}]`;
+
             ip.value='';
 
-            await appendRow(appId, recId, row);
+            // 保存 → 画面データを差し替え（ページリロードなし）
+            await putRowAndRefreshView(appId, recId, row);
 
-            if(st) st.textContent= result==='OK' ? 'OKで記録' : `NGで記録：${reasons.join(' / ')||'不一致'}`;
-            setTimeout(()=>{ try{ location.reload(); }catch(_){ } }, 80);
+            if(st) st.textContent = result==='OK'
+              ? 'OKで記録'
+              : `NGで記録：${reasons.join(' / ')||'不一致'}`;
+            setTimeout(()=>{ const s=$id('tana-scan-status'); if(s) s.textContent=`READY (${where})`; }, 1500);
 
           }catch(e){
             console.error('[TANA] keydown error:', e);
-            if(st) st.textContent='ERROR: 保存失敗';
+            const st=$id('tana-scan-status'); if(st) st.textContent='ERROR: 保存失敗';
             alert('保存に失敗しました。');
           }
-        },true);
+        }, true);
       }
 
       setTimeout(()=> $id('tana-scan-input')?.focus(), 0);

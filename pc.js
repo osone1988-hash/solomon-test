@@ -1,22 +1,31 @@
-/* TANA-OROSHI pc.js — scan_area固定（全レコード）/ 未保存ルールを上書きしない / 数値の全角・負数対応
-   v=pc-ng-rules-2025-11-10-15 */
+/* TANA-OROSHI pc.js
+   - scan_area に SCAN UI を表示（全レコード / 新規・編集両対応）
+   - SCAN → サブテーブルに追記（複数理由を reason に出力）
+   - 数値：全角/カンマ/負数 対応
+   - 編集レコード：サーバーにも即反映＋$revision を更新して GAIA_UN03 防止
+   - 新規レコード：画面だけに反映（保存時にまとめて登録）
+   v=pc-ng-rules-2025-11-10-16
+*/
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-10-15';
-  try { console.log('[TANA-OROSHI] pc.js loaded:', VERSION); window.__TANA_PC_VERSION = VERSION; } catch(_) {}
+  const VERSION = 'pc-ng-rules-2025-11-10-16';
+  try {
+    console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
+    window.__TANA_PC_VERSION = VERSION;
+  } catch (_) {}
 
-  // ---- 判定フィールドコード（必要に応じてここだけ変更）----
+  // ---- 判定用フィールドコード（必要に応じてここだけ変更）----
   const JUDGE = {
-    text:   { value: 'a',  op: 'aj' }, // 文字
-    number: { value: 'b',  op: 'bj' }, // 数値
-    date:   { value: 'c',  op: 'cj' }, // 日時
+    text:   { value: 'a',  op: 'aj' },  // 文字
+    number: { value: 'b',  op: 'bj' },  // 数値
+    date:   { value: 'c',  op: 'cj' },  // 日時
   };
 
   // ---- サブテーブル ----
   const TABLE = 'scan_table';
   const COL   = { scanAt:'scan_at', at:'at', bt:'bt', ct:'ct', result:'result', reason:'reason' };
 
-  // ---- サブテーブル列のタイプ（画面反映用・ローカル構築に使用）----
+  // ---- サブテーブル列タイプ（画面側の型を決める）----
   const FIELD_TYPES = {
     [COL.scanAt]: 'DATETIME',
     [COL.at]:     'SINGLE_LINE_TEXT',
@@ -26,7 +35,7 @@
     [COL.reason]: 'MULTI_LINE_TEXT',
   };
 
-  // ---- SCAN を表示する Space の要素ID ----
+  // ---- SCAN UI を置く Space ----
   const SCAN_SPACE_ID = 'scan_area';
 
   // ===== Utils =====
@@ -34,9 +43,13 @@
   const S   = (v) => (v == null ? '' : String(v));
   const iso = (d) => (d ? new Date(d).toISOString() : null);
 
-  // 全角→半角・カンマ除去・各種マイナス正規化（－ U+FF0D, − U+2212 → ASCII '-'）
+  // 全角数字/記号 → 半角、カンマ削除、各種マイナス記号を '-' に統一
   function normalizeNumberString(v) {
-    const map = { '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','．':'.','－':'-','−':'-' };
+    const map = {
+      '０':'0','１':'1','２':'2','３':'3','４':'4',
+      '５':'5','６':'6','７':'7','８':'8','９':'9',
+      '．':'.','－':'-','−':'-'
+    };
     return S(v).replace(/[０-９．－−,]/g, ch => ch === ',' ? '' : (map[ch] ?? ch)).trim();
   }
   function toNumOrNull(v){
@@ -71,7 +84,7 @@
   const ok_number = (scan, label, base) => {
     const s=toNumOrNull(scan), b=toNumOrNull(base);
     if (!label) return true;
-    if (s==null || b==null) return false; // 値が取れない場合はNG
+    if (s==null || b==null) return false; // 値が取れない → NG
     if (label.includes('同じ') || label==='==' || label==='equals') return s===b;
     if (label.includes('異なる') || label==='!=')                    return s!==b;
     if (label.includes('以上') || label.includes('>='))               return s>=b;
@@ -92,28 +105,42 @@
     return true;
   };
 
-  // サーバーへ value-only で1行追加（画面は上書きしない）
+  // ---- サーバーに1行追記し、返ってきた revision を画面に反映して GAIA_UN03 を防ぐ ----
   async function appendRowServer(appId, recId, rowValueOnly){
     const url = kintone.api.url('/k/v1/record.json', true);
+    // サーバー側の最新テーブルを取得
     const { record } = await kintone.api(url,'GET',{ app:appId, id:recId });
     const curr = Array.isArray(record[TABLE]?.value) ? record[TABLE].value : [];
     const next = curr.concat([{ value: rowValueOnly }]);
-    await kintone.api(url,'PUT',{ app:appId, id:recId, record: { [TABLE]: { value: next } } });
+    const putRes = await kintone.api(url,'PUT',{
+      app: appId,
+      id:  recId,
+      record: { [TABLE]: { value: next } }
+    });
+    // 返ってきた revision を画面の $revision に反映
+    try {
+      const appRec = kintone.app.record.get();
+      if (appRec && appRec.record && appRec.record.$revision) {
+        appRec.record.$revision.value = putRes.revision;
+        kintone.app.record.set(appRec);
+      }
+    } catch (e) {
+      console.warn('[TANA] failed to update revision:', e);
+    }
   }
 
-  // ローカル（画面）に型付きで1行追加（未保存の既存編集を温存）
+  // ---- 画面側（ローカル）のサブテーブルに1行追加 ----
   function appendRowLocal(rowValueOnly){
     const appRec = kintone.app.record.get(); if(!appRec||!appRec.record) return;
     const rec = appRec.record;
     const curr = Array.isArray(rec[TABLE]?.value) ? rec[TABLE].value : [];
 
-    // 型付き行を構築
     const clientRow = {};
     Object.keys(rowValueOnly).forEach(code=>{
       const type = FIELD_TYPES[code] || 'SINGLE_LINE_TEXT';
       let val = rowValueOnly[code];
-      if (type==='NUMBER' && val!=='') val = String(val);
-      if (type==='DATETIME' && val)    val = String(val);
+      if (type==='NUMBER'   && val!=='') val = String(val);
+      if (type==='DATETIME' && val)      val = String(val);
       clientRow[code] = { type, value: val };
     });
 
@@ -122,7 +149,7 @@
     kintone.app.record.set({ record: rec });
   }
 
-  // 入力: 文字 数値 日時…以降は結合（例: "2025-11-09 09:00"）
+  // ---- SCAN文字列を「文字 数値 日時」に分解 ----
   function parseScan3(raw){
     const a = S(raw).trim().split(/\s+/).filter(Boolean);
     const at = a.shift() || '';
@@ -131,10 +158,9 @@
     return { at, bt, ct };
   }
 
-  // ---- SCAN UI（全レコードで確実に表示：scan_area最優先 + リトライ）----
+  // ---- SCAN UI の描画 ----
   function mountScanUI(targetEl, placeTag){
-    // 既存UIを除去（増殖防止）
-    document.querySelectorAll('#tana-scan-wrap').forEach(n=>n.remove());
+    document.querySelectorAll('#tana-scan-wrap').forEach(n=>n.remove()); // 複製防止
 
     const wrap=document.createElement('div');
     wrap.id='tana-scan-wrap';
@@ -152,6 +178,7 @@
   }
 
   async function ensureScanUI() {
+    // まずは space:scan_area を探す（最大3秒間リトライ）
     const tryGetSpace = () => kintone.app.record.getSpaceElement?.(SCAN_SPACE_ID) || null;
     let anchor = tryGetSpace();
     let place = '';
@@ -165,7 +192,7 @@
     }
     if (anchor) { place='space:'+SCAN_SPACE_ID; mountScanUI(anchor, place); return; }
 
-    // フォールバック1: c判定行の直後
+    // フォールバック1: 日時判定(cj)行の直後
     const cjEl = kintone.app.record.getFieldElement?.(JUDGE.date.op);
     if (cjEl && cjEl.parentElement && cjEl.parentElement.parentElement) {
       const row=cjEl.parentElement.parentElement;
@@ -192,15 +219,17 @@
     mountScanUI(div, place);
   }
 
-  // ---- 画面イベント ----
-  kintone.events.on('app.record.edit.show', (event)=>{
-    try{
-      ensureScanUI(); // ← 各レコードで必ず実行
+  // ---- 新規・編集 両方で SCAN UI を表示 ----
+  const SHOW_EVENTS = ['app.record.edit.show', 'app.record.create.show'];
 
-      // クリック/Enter は一度だけバインド（UIは毎回描画）
+  kintone.events.on(SHOW_EVENTS, (event)=>{
+    try{
+      ensureScanUI();
+
       if (!window.__TANA_SCAN_BOUND__){
         window.__TANA_SCAN_BOUND__ = true;
 
+        // クリアボタン
         document.addEventListener('click',(ev)=>{
           const t=ev.target; if(!(t instanceof HTMLElement)) return;
           if (t.id==='tana-scan-clear'){
@@ -209,6 +238,7 @@
           }
         }, true);
 
+        // Enter キー
         document.addEventListener('keydown', async (ev)=>{
           const ip=$id('tana-scan-input');
           if (!ip || ev.target!==ip || ev.key!=='Enter') return;
@@ -218,8 +248,9 @@
           const appId=kintone.app.getId?.();
           const recWrap=kintone.app.record.get();
           const rec=recWrap?.record || event.record;
-          const recId=rec?.$id?.value || kintone.app.record.getId?.();
-          if (!appId || !rec || !recId) { if (st) st.textContent='ERROR: no app/record'; return; }
+          const recId = rec?.$id?.value;    // 編集時 only / 新規は undefined
+
+          if (!appId || !rec) { if (st) st.textContent='ERROR: no app/record'; return; }
 
           try{
             const { at, bt, ct } = parseScan3(ip.value);
@@ -227,7 +258,7 @@
             const btNum=bt;
             const ctIso=ct? iso(ct): null;
 
-            // 画面上の条件値（未保存の編集を含む）
+            // 画面上のルール値（未保存の編集も含む）
             const aVal = rec[JUDGE.text.value ]?.value ?? '';
             const aOp  = rec[JUDGE.text.op    ]?.value ?? '';
             const bVal = rec[JUDGE.number.value]?.value ?? '';
@@ -245,9 +276,9 @@
             if(!okB) reasons.push(`b:${bOp||'-'} (scan:${btNum==null?'null':String(btNum)}, base:${bVal==null?'null':normalizeNumberString(bVal)})`);
             if(!okC) reasons.push(`c:${cOp||'-'}`);
 
-            const result=reasons.length? 'NG':'OK';
+            const result = reasons.length ? 'NG' : 'OK';
 
-            // 保存前に画面へ型付きで追記（未保存の他項目は温存）
+            // value-only 行
             const rowValueOnly = {
               [COL.scanAt]: iso(new Date()),
               [COL.at]:     atTxt,
@@ -256,29 +287,36 @@
               [COL.result]: result,
               [COL.reason]: reasons.join(' / ')
             };
+
+            // まず画面に反映（新規・編集共通）
             appendRowLocal(rowValueOnly);
 
-            if(st) st.textContent = `判定→保存中…`;
+            if (st) st.textContent = recId
+              ? '判定→サーバー保存中…'
+              : '判定→画面に仮保存（新規レコード）';
+
             ip.value='';
 
-            // サーバーへも反映（value-only）。失敗時はアラート。
-            try {
-              await appendRowServer(appId, recId, rowValueOnly);
-              if(st) st.textContent = result==='OK'
-                ? 'OKで記録'
-                : `NGで記録：${reasons.join(' / ')||'不一致'}`;
-            } catch(e) {
-              console.error('[TANA] put error:', e);
-              if(st) st.textContent = 'ERROR: サーバー保存失敗（画面の行は仮表示）';
-              alert('サーバー保存に失敗しました。通信状況をご確認ください。');
-            } finally {
-              setTimeout(()=>{ const s=$id('tana-scan-status'); if(s) s.textContent='READY'; }, 1500);
+            // 編集レコードだけサーバーにも即反映
+            if (recId) {
+              try {
+                await appendRowServer(appId, recId, rowValueOnly);
+                if(st) st.textContent = result==='OK'
+                  ? 'OKで記録'
+                  : `NGで記録：${reasons.join(' / ')||'不一致'}`;
+              } catch(e) {
+                console.error('[TANA] put error:', e);
+                if(st) st.textContent='ERROR: サーバー保存失敗（画面は仮表示）';
+                alert('サーバー保存に失敗しました。通信状況をご確認ください。');
+              }
             }
+
+            setTimeout(()=>{ const s=$id('tana-scan-status'); if(s) s.textContent='READY'; }, 1500);
 
           }catch(e){
             console.error('[TANA] keydown error:', e);
-            const st=$id('tana-scan-status'); if(st) st.textContent='ERROR: 保存失敗';
-            alert('保存に失敗しました。');
+            const st=$id('tana-scan-status'); if(st) st.textContent='ERROR: 処理失敗';
+            alert('処理に失敗しました。');
           }
         }, true);
       }

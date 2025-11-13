@@ -1,12 +1,11 @@
-/* TANA-OROSHI pc.js — SCANをscan_area内に固定 / OK条件方式・複数理由
-   v=pc-ng-rules-2025-11-10-8 */
+/* TANA-OROSHI pc.js — SCANを scan_area / cj直後 に確実に表示
+   v=pc-ng-rules-2025-11-10-9 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-10-8';
+  const VERSION = 'pc-ng-rules-2025-11-10-9';
   try { console.log('[TANA-OROSHI] pc.js loaded:', VERSION); window.__TANA_PC_VERSION = VERSION; } catch(_) {}
 
   // ---- 判定フィールド（編集画面の上下ドロップ）----
-  // 文字:a / 数値:b / 日時:c と そのオペレータ（aj,bj,cj）
   const JUDGE = {
     text:   { value: 'a',  op: 'aj' },
     number: { value: 'b',  op: 'bj' },
@@ -17,15 +16,14 @@
   const TABLE = 'scan_table';
   const COL = {
     scanAt: 'scan_at',
-    at:     'at',   // ★修正: ここが 'a' ではなく 'at'
-    bt:     'bt',   // ★修正: ここが 'b' ではなく 'bt'
+    at:     'at',
+    bt:     'bt',
     ct:     'ct',
     result: 'result',
     reason: 'reason',
   };
 
-  // SCAN を差し込むフィールド（スペーサ等）※この場所に固定表示
-  const SCAN_ANCHOR = 'scan_area';
+  const SCAN_ANCHOR_CODE = 'scan_area'; // スペーサのフィールドコード
 
   // ===== utils =====
   const $id = (id) => document.getElementById(id);
@@ -48,7 +46,6 @@
     const dt=new Date(str.replace(/\//g,'-'));
     return Number.isNaN(dt.getTime())?null:dt;
   }
-
   function normalizeOp(kind, s){
     const t=(s||'').trim();
     if (kind==='text'){
@@ -77,8 +74,6 @@
     }
     return '';
   }
-
-  // 「OK条件」を満たさないとNGにする
   const ok_text=(v,op,base)=>{
     const s=S(v), b=S(base);
     if(!op||b==='') return true;
@@ -112,7 +107,6 @@
     return true;
   };
 
-  // API: 現レコード取得→行追加（value-onlyでOK）
   async function appendRow(appId, recId, rowValueOnly){
     const url=kintone.api.url('/k/v1/record.json', true);
     const {record}=await kintone.api(url,'GET',{app:appId,id:recId});
@@ -121,7 +115,6 @@
     await kintone.api(url,'PUT',{app:appId,id:recId,record:{[TABLE]:{value:next}}});
   }
 
-  // SCAN 文字列 → 3要素
   function parseScan3(raw){
     const a=S(raw).trim().split(/\s+/).filter(Boolean);
     return {
@@ -131,15 +124,45 @@
     };
   }
 
-  // SCAN UI を scan_area フィールド「内側」に描画
+  // -------- SCAN UI を確実に描画する（優先順: scan_area内 → cj直後 → json_config直前 → 末尾）
   function ensureScanUI(){
-    const anchor = kintone.app.record.getFieldElement?.(SCAN_ANCHOR);
-    if (!anchor) return;
-    // アンカー内を置き換え（この場所に固定される）
+    // 1) scan_area の内側
+    let anchor = kintone.app.record.getFieldElement?.(SCAN_ANCHOR_CODE);
+    let place = 'scan_area';
+
+    // 2) 取れなければ cj の直後に挿入
+    if (!anchor) {
+      const cjEl = kintone.app.record.getFieldElement?.(JUDGE.date.op);
+      if (cjEl && cjEl.parentElement && cjEl.parentElement.parentElement) {
+        const targetRow = cjEl.parentElement.parentElement; // フィールドの行
+        anchor = document.createElement('div');
+        targetRow.parentElement.insertBefore(anchor, targetRow.nextSibling);
+        place = 'after_cj';
+      }
+    }
+
+    // 3) さらにダメなら json_config の直前
+    if (!anchor) {
+      const jsonEl = kintone.app.record.getFieldElement?.('json_config');
+      if (jsonEl && jsonEl.parentElement && jsonEl.parentElement.parentElement) {
+        anchor = document.createElement('div');
+        jsonEl.parentElement.parentElement.insertBefore(anchor, jsonEl.parentElement);
+        place = 'before_json_config';
+      }
+    }
+
+    // 4) 最終手段：body末尾
+    if (!anchor) {
+      anchor = document.createElement('div');
+      document.body.appendChild(anchor);
+      place = 'body_fallback';
+    }
+
+    // 容器をクリアして描画
     anchor.innerHTML = '';
     const wrap=document.createElement('div');
     wrap.id='tana-scan-wrap';
-    wrap.style.cssText='padding:8px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
+    wrap.style.cssText='margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
     wrap.innerHTML=`
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <strong>SCAN</strong>
@@ -147,7 +170,7 @@
           placeholder="(文字) (数値) (日時) の順に入力 → Enter"
           style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
         <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
-        <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY</span>
+        <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY (${place})</span>
       </div>`;
     anchor.appendChild(wrap);
   }
@@ -184,10 +207,9 @@
             const raw=ip.value;
             const parsed=parseScan3(raw);
             const atTxt=S(parsed.at);
-            const btNum=parsed.bt; // 数値
+            const btNum=parsed.bt;
             const ctIso=parsed.ct? iso(parsed.ct): null;
 
-            // OK条件を取得
             const aVal=rec[JUDGE.text.value ]?.value ?? '';
             const aOp =rec[JUDGE.text.op    ]?.value ?? '';
             const bVal=rec[JUDGE.number.value]?.value ?? '';
@@ -206,11 +228,10 @@
 
             const result=reasons.length? 'NG':'OK';
 
-            // value-only 形式
             const row={};
             row[COL.scanAt]={ value: iso(new Date()) };
             row[COL.at]    ={ value: atTxt };
-            row[COL.bt]    ={ value: btNum==null? '' : String(btNum) }; // ★数値は文字列で安定
+            row[COL.bt]    ={ value: btNum==null? '' : String(btNum) };
             row[COL.ct]    ={ value: ctIso };
             row[COL.result]={ value: result };
             row[COL.reason]={ value: reasons.join(' / ') };
@@ -221,7 +242,6 @@
             await appendRow(appId, recId, row);
 
             if(st) st.textContent= result==='OK' ? 'OKで記録' : `NGで記録：${reasons.join(' / ')||'不一致'}`;
-            // 表示を最新化
             setTimeout(()=>{ try{ location.reload(); }catch(_){ } }, 80);
 
           }catch(e){

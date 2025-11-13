@@ -1,54 +1,53 @@
-/* TANA-OROSHI pc.js — SCANを scan_area / cj直後 に確実に表示
-   v=pc-ng-rules-2025-11-10-9 */
+/* TANA-OROSHI pc.js — SCANをscan_areaに固定（フォールバック付）/ OK条件方式・複数理由
+   v=pc-ng-rules-2025-11-10-10 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-10-9';
+  const VERSION = 'pc-ng-rules-2025-11-10-10';
   try { console.log('[TANA-OROSHI] pc.js loaded:', VERSION); window.__TANA_PC_VERSION = VERSION; } catch(_) {}
 
-  // ---- 判定フィールド（編集画面の上下ドロップ）----
+  // ---- 判定フィールド ----
   const JUDGE = {
     text:   { value: 'a',  op: 'aj' },
     number: { value: 'b',  op: 'bj' },
     date:   { value: 'c',  op: 'cj' },
   };
 
-  // ---- サブテーブル定義 ----
+  // ---- サブテーブル ----
   const TABLE = 'scan_table';
   const COL = {
     scanAt: 'scan_at',
-    at:     'at',
-    bt:     'bt',
-    ct:     'ct',
+    at:     'at',   // 文字列
+    bt:     'bt',   // 数値（value-onlyでは文字列で投入）
+    ct:     'ct',   // 日時 ISO
     result: 'result',
     reason: 'reason',
   };
 
-  const SCAN_ANCHOR_CODE = 'scan_area'; // スペーサのフィールドコード
+  // SCAN を入れるスペースの要素ID
+  const SCAN_SPACE_ID = 'scan_area';
 
   // ===== utils =====
   const $id = (id) => document.getElementById(id);
+  const S = (v) => (v == null ? '' : String(v));
   const iso = (d) => (d ? new Date(d).toISOString() : null);
-  const S = (v) => (v==null ? '' : String(v));
-  const toNumOrNull = (v)=>{
+  const toNumOrNull = (v) => {
     const s = S(v).trim();
-    if (!s) return null;
-    if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
-    return Number(s);
+    return (!s || !/^-?\d+(\.\d+)?$/.test(s)) ? null : Number(s);
   };
-  function parseDateLoose(s){
+  function parseDateLoose(s) {
     if (!s) return null;
     const str = S(s).trim();
     if (/^\d{8}$/.test(str)) {
-      const y=+str.slice(0,4), m=+str.slice(4,6)-1, d=+str.slice(6,8);
-      const dt=new Date(y,m,d);
-      return Number.isNaN(dt.getTime())?null:dt;
+      const y = +str.slice(0,4), m = +str.slice(4,6)-1, d = +str.slice(6,8);
+      const dt = new Date(y,m,d);
+      return Number.isNaN(dt.getTime()) ? null : dt;
     }
-    const dt=new Date(str.replace(/\//g,'-'));
-    return Number.isNaN(dt.getTime())?null:dt;
+    const dt = new Date(str.replace(/\//g,'-'));
+    return Number.isNaN(dt.getTime()) ? null : dt;
   }
-  function normalizeOp(kind, s){
-    const t=(s||'').trim();
-    if (kind==='text'){
+  function normalizeOp(kind, s) {
+    const t = (s || '').trim();
+    if (kind === 'text') {
       if (['まったく同じ','完全一致','==','equals'].includes(t)) return 'eq';
       if (['含む','contains'].includes(t)) return 'contains';
       if (['含まない','notContains'].includes(t)) return 'notContains';
@@ -56,7 +55,7 @@
       if (['後部一致','後方一致','endsWith'].includes(t)) return 'ends';
       return '';
     }
-    if (kind==='number'){
+    if (kind === 'number') {
       if (['同じ','==','equals'].includes(t)) return 'eq';
       if (['異なる','!=','not'].includes(t)) return 'ne';
       if (['以上','>='].includes(t)) return 'gte';
@@ -65,7 +64,7 @@
       if (['より大きい','>','超'].includes(t)) return 'gt';
       return '';
     }
-    if (kind==='date'){
+    if (kind === 'date') {
       if (['同じ','=='].includes(t)) return 'eq';
       if (['以外','!='].includes(t)) return 'ne';
       if (['以降','>='].includes(t)) return 'gte';
@@ -74,19 +73,18 @@
     }
     return '';
   }
-  const ok_text=(v,op,base)=>{
-    const s=S(v), b=S(base);
-    if(!op||b==='') return true;
+  // 「OK条件」を満たさないと NG
+  const ok_text = (v, op, base) => {
+    const s=S(v), b=S(base); if(!op || b==='') return true;
     if(op==='eq') return s===b;
     if(op==='contains') return s.includes(b);
     if(op==='notContains') return !s.includes(b);
     if(op==='starts') return s.startsWith(b);
-    if(op==='ends') return s.endsWith(b);
+    if(op==='ends')   return s.endsWith(b);
     return true;
   };
-  const ok_number=(v,op,base)=>{
-    const s=toNumOrNull(v), b=toNumOrNull(base);
-    if(!op||b==null||s==null) return true;
+  const ok_number = (v, op, base) => {
+    const s=toNumOrNull(v), b=toNumOrNull(base); if(!op || b==null || s==null) return true;
     if(op==='eq')  return s===b;
     if(op==='ne')  return s!==b;
     if(op==='gte') return s>=b;
@@ -95,11 +93,11 @@
     if(op==='gt')  return s> b;
     return true;
   };
-  const ok_date=(v,op,base)=>{
+  const ok_date = (v, op, base) => {
     const sv = v instanceof Date ? v : parseDateLoose(v);
     const bv = base instanceof Date ? base : parseDateLoose(base);
-    if(!op||!sv||!bv) return true;
-    const s=sv.getTime(), b=bv.getTime();
+    if(!op || !sv || !bv) return true;
+    const s = sv.getTime(), b = bv.getTime();
     if(op==='eq')  return s===b;
     if(op==='ne')  return s!==b;
     if(op==='gte') return s>=b; // 以降
@@ -107,36 +105,44 @@
     return true;
   };
 
-  async function appendRow(appId, recId, rowValueOnly){
-    const url=kintone.api.url('/k/v1/record.json', true);
-    const {record}=await kintone.api(url,'GET',{app:appId,id:recId});
-    const curr=Array.isArray(record[TABLE]?.value)?record[TABLE].value:[];
-    const next=curr.concat([{value:rowValueOnly}]);
-    await kintone.api(url,'PUT',{app:appId,id:recId,record:{[TABLE]:{value:next}}});
+  async function appendRow(appId, recId, rowValueOnly) {
+    const url = kintone.api.url('/k/v1/record.json', true);
+    const { record } = await kintone.api(url, 'GET', { app: appId, id: recId });
+    const curr = Array.isArray(record[TABLE]?.value) ? record[TABLE].value : [];
+    const next = curr.concat([{ value: rowValueOnly }]);
+    await kintone.api(url, 'PUT', { app: appId, id: recId, record: { [TABLE]: { value: next } } });
   }
 
-  function parseScan3(raw){
-    const a=S(raw).trim().split(/\s+/).filter(Boolean);
+  function parseScan3(raw) {
+    const a = S(raw).trim().split(/\s+/).filter(Boolean);
     return {
-      at: a[0]||'',
-      bt: a.length>1? toNumOrNull(a[1]) : null,
-      ct: a.length>2? parseDateLoose(a[2]) : null,
+      at: a[0] || '',
+      bt: a.length > 1 ? toNumOrNull(a[1]) : null,
+      ct: a.length > 2 ? parseDateLoose(a[2]) : null,
     };
   }
 
-  // -------- SCAN UI を確実に描画する（優先順: scan_area内 → cj直後 → json_config直前 → 末尾）
-  function ensureScanUI(){
-    // 1) scan_area の内側
-    let anchor = kintone.app.record.getFieldElement?.(SCAN_ANCHOR_CODE);
-    let place = 'scan_area';
+  // -------- SCAN UI の描画（scan_area が最優先） --------
+  function ensureScanUI() {
+    // 既存UIを完全除去（増殖対策）
+    document.querySelectorAll('#tana-scan-root').forEach(n => n.remove());
 
-    // 2) 取れなければ cj の直後に挿入
+    let anchor = null;
+    let place = '';
+
+    // 1) スペース要素（要素ID）を最優先
+    try {
+      anchor = kintone.app.record.getSpaceElement?.(SCAN_SPACE_ID) || null;
+      if (anchor) place = 'scan_area';
+    } catch (_) {}
+
+    // 2) 取れなければ cj の直後
     if (!anchor) {
       const cjEl = kintone.app.record.getFieldElement?.(JUDGE.date.op);
       if (cjEl && cjEl.parentElement && cjEl.parentElement.parentElement) {
-        const targetRow = cjEl.parentElement.parentElement; // フィールドの行
+        const row = cjEl.parentElement.parentElement;
         anchor = document.createElement('div');
-        targetRow.parentElement.insertBefore(anchor, targetRow.nextSibling);
+        row.parentElement.insertBefore(anchor, row.nextSibling);
         place = 'after_cj';
       }
     }
@@ -151,19 +157,18 @@
       }
     }
 
-    // 4) 最終手段：body末尾
+    // 4) 最後の手段：body 末尾
     if (!anchor) {
       anchor = document.createElement('div');
       document.body.appendChild(anchor);
       place = 'body_fallback';
     }
 
-    // 容器をクリアして描画
-    anchor.innerHTML = '';
-    const wrap=document.createElement('div');
-    wrap.id='tana-scan-wrap';
-    wrap.style.cssText='margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
-    wrap.innerHTML=`
+    // UI 描画
+    const root = document.createElement('div');
+    root.id = 'tana-scan-root';
+    root.style.cssText = 'margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
+    root.innerHTML = `
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <strong>SCAN</strong>
         <input id="tana-scan-input" type="text" autocomplete="off"
@@ -172,89 +177,93 @@
         <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
         <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY (${place})</span>
       </div>`;
-    anchor.appendChild(wrap);
+    anchor.appendChild(root);
   }
 
-  kintone.events.on('app.record.edit.show', (event)=>{
-    try{
+  // -------- 画面イベント --------
+  kintone.events.on('app.record.edit.show', (event) => {
+    try {
       ensureScanUI();
 
-      if(!window.__TANA_SCAN_BOUND__){
-        window.__TANA_SCAN_BOUND__=true;
+      if (!window.__TANA_SCAN_BOUND__) {
+        window.__TANA_SCAN_BOUND__ = true;
 
-        document.addEventListener('click',(ev)=>{
-          const t=ev.target;
-          if(!(t instanceof HTMLElement)) return;
-          if(t.id==='tana-scan-clear'){
-            const ip=$id('tana-scan-input'); if(ip){ ip.value=''; ip.focus(); }
-            const st=$id('tana-scan-status'); if(st) st.textContent='READY';
+        document.addEventListener('click', (ev) => {
+          const t = ev.target;
+          if (!(t instanceof HTMLElement)) return;
+          if (t.id === 'tana-scan-clear') {
+            const ip = $id('tana-scan-input');
+            if (ip) { ip.value = ''; ip.focus(); }
+            const st = $id('tana-scan-status'); if (st) st.textContent = 'READY';
           }
-        },true);
+        }, true);
 
-        document.addEventListener('keydown', async (ev)=>{
-          const ip=$id('tana-scan-input');
-          if(!ip || ev.target!==ip || ev.key!=='Enter') return;
+        document.addEventListener('keydown', async (ev) => {
+          const ip = $id('tana-scan-input');
+          if (!ip || ev.target !== ip || ev.key !== 'Enter') return;
           ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
 
-          const st=$id('tana-scan-status');
-          const appId=kintone.app.getId?.();
-          const recAll=kintone.app.record.get();
-          const rec=recAll?.record || event.record;
-          const recId=rec?.$id?.value || kintone.app.record.getId?.();
-          if(!appId||!rec||!recId){ if(st) st.textContent='ERROR: no app/record'; return; }
+          const st = $id('tana-scan-status');
+          const appId = kintone.app.getId?.();
+          const recWrap = kintone.app.record.get();
+          const rec = recWrap?.record || event.record;
+          const recId = rec?.$id?.value || kintone.app.record.getId?.();
+          if (!appId || !rec || !recId) { if (st) st.textContent = 'ERROR: no app/record'; return; }
 
-          try{
-            const raw=ip.value;
-            const parsed=parseScan3(raw);
-            const atTxt=S(parsed.at);
-            const btNum=parsed.bt;
-            const ctIso=parsed.ct? iso(parsed.ct): null;
+          try {
+            const raw = ip.value;
+            const parsed = parseScan3(raw);
+            const atTxt = S(parsed.at);
+            const btNum = parsed.bt;
+            const ctIso = parsed.ct ? iso(parsed.ct) : null;
 
-            const aVal=rec[JUDGE.text.value ]?.value ?? '';
-            const aOp =rec[JUDGE.text.op    ]?.value ?? '';
-            const bVal=rec[JUDGE.number.value]?.value ?? '';
-            const bOp =rec[JUDGE.number.op   ]?.value ?? '';
-            const cVal=rec[JUDGE.date.value ]?.value ?? '';
-            const cOp =rec[JUDGE.date.op    ]?.value ?? '';
+            // OK条件取得
+            const aVal = rec[JUDGE.text.value ]?.value ?? '';
+            const aOp  = rec[JUDGE.text.op    ]?.value ?? '';
+            const bVal = rec[JUDGE.number.value]?.value ?? '';
+            const bOp  = rec[JUDGE.number.op   ]?.value ?? '';
+            const cVal = rec[JUDGE.date.value ]?.value ?? '';
+            const cOp  = rec[JUDGE.date.op    ]?.value ?? '';
 
-            const okA=ok_text(  atTxt, normalizeOp('text',   aOp), aVal);
-            const okB=ok_number(btNum, normalizeOp('number', bOp), bVal);
-            const okC=ok_date(  parsed.ct, normalizeOp('date',   cOp), cVal);
+            const okA = ok_text(  atTxt,  normalizeOp('text',   aOp), aVal);
+            const okB = ok_number(btNum,   normalizeOp('number', bOp), bVal);
+            const okC = ok_date(  parsed.ct, normalizeOp('date',   cOp), cVal);
 
-            const reasons=[];
-            if(!okA) reasons.push(`a:${aOp||'-'}`);
-            if(!okB) reasons.push(`b:${bOp||'-'}`);
-            if(!okC) reasons.push(`c:${cOp||'-'}`);
+            const reasons = [];
+            if (!okA) reasons.push(`a:${aOp||'-'}`);
+            if (!okB) reasons.push(`b:${bOp||'-'}`);
+            if (!okC) reasons.push(`c:${cOp||'-'}`);
 
-            const result=reasons.length? 'NG':'OK';
+            const result = reasons.length ? 'NG' : 'OK';
 
-            const row={};
-            row[COL.scanAt]={ value: iso(new Date()) };
-            row[COL.at]    ={ value: atTxt };
-            row[COL.bt]    ={ value: btNum==null? '' : String(btNum) };
-            row[COL.ct]    ={ value: ctIso };
-            row[COL.result]={ value: result };
-            row[COL.reason]={ value: reasons.join(' / ') };
+            const row = {};
+            row[COL.scanAt] = { value: iso(new Date()) };
+            row[COL.at]     = { value: atTxt };
+            row[COL.bt]     = { value: btNum == null ? '' : String(btNum) };
+            row[COL.ct]     = { value: ctIso };
+            row[COL.result] = { value: result };
+            row[COL.reason] = { value: reasons.join(' / ') };
 
-            if(st) st.textContent='SAVING...';
-            ip.value='';
+            if (st) st.textContent = 'SAVING...';
+            ip.value = '';
 
             await appendRow(appId, recId, row);
 
-            if(st) st.textContent= result==='OK' ? 'OKで記録' : `NGで記録：${reasons.join(' / ')||'不一致'}`;
-            setTimeout(()=>{ try{ location.reload(); }catch(_){ } }, 80);
+            if (st) st.textContent = result === 'OK' ? 'OKで記録' : `NGで記録：${reasons.join(' / ') || '不一致'}`;
+            setTimeout(() => { try { location.reload(); } catch (_) {} }, 80);
 
-          }catch(e){
+          } catch (e) {
             console.error('[TANA] keydown error:', e);
-            if(st) st.textContent='ERROR: 保存失敗';
+            const st = $id('tana-scan-status'); if (st) st.textContent = 'ERROR: 保存失敗';
             alert('保存に失敗しました。');
           }
-        },true);
+        }, true);
       }
 
-      setTimeout(()=> $id('tana-scan-input')?.focus(), 0);
-
-    }catch(e){ console.error('[TANA] init error:', e); }
+      setTimeout(() => $id('tana-scan-input')?.focus(), 0);
+    } catch (e) {
+      console.error('[TANA] init error:', e);
+    }
     return event;
   });
 })();

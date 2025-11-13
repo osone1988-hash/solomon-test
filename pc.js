@@ -1,8 +1,8 @@
-/* TANA-OROSHI pc.js — SCANをscan_areaに固定（フォールバック付）/ OK条件方式・複数理由
-   v=pc-ng-rules-2025-11-10-10 */
+/* TANA-OROSHI pc.js — SCANをscan_areaに固定 / 数値判定強化 / 複数理由
+   v=pc-ng-rules-2025-11-10-11 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-10-10';
+  const VERSION = 'pc-ng-rules-2025-11-10-11';
   try { console.log('[TANA-OROSHI] pc.js loaded:', VERSION); window.__TANA_PC_VERSION = VERSION; } catch(_) {}
 
   // ---- 判定フィールド ----
@@ -30,10 +30,19 @@
   const $id = (id) => document.getElementById(id);
   const S = (v) => (v == null ? '' : String(v));
   const iso = (d) => (d ? new Date(d).toISOString() : null);
-  const toNumOrNull = (v) => {
-    const s = S(v).trim();
-    return (!s || !/^-?\d+(\.\d+)?$/.test(s)) ? null : Number(s);
-  };
+
+  // 全角/カンマ対応の数値正規化
+  function normalizeDigitsStr(s) {
+    const map = { '０':'0','１':'1','２':'2','３':'3','４':'4','５':'5','６':'6','７':'7','８':'8','９':'9','．':'.','－':'-' };
+    return S(s).replace(/[０-９．－,]/g, ch => (ch === ',' ? '' : (map[ch] ?? ch))).trim();
+  }
+  function toNumOrNull(v) {
+    const t = normalizeDigitsStr(v);
+    if (!t || !/^-?\d+(\.\d+)?$/.test(t)) return null;
+    const n = Number(t);
+    return Number.isFinite(n) ? n : null;
+  }
+
   function parseDateLoose(s) {
     if (!s) return null;
     const str = S(s).trim();
@@ -45,35 +54,37 @@
     const dt = new Date(str.replace(/\//g,'-'));
     return Number.isNaN(dt.getTime()) ? null : dt;
   }
+
   function normalizeOp(kind, s) {
     const t = (s || '').trim();
     if (kind === 'text') {
-      if (['まったく同じ','完全一致','==','equals'].includes(t)) return 'eq';
-      if (['含む','contains'].includes(t)) return 'contains';
-      if (['含まない','notContains'].includes(t)) return 'notContains';
-      if (['前部一致','前方一致','startsWith'].includes(t)) return 'starts';
-      if (['後部一致','後方一致','endsWith'].includes(t)) return 'ends';
+      if (/^(まったく同じ|完全一致|==|equals)$/u.test(t)) return 'eq';
+      if (/^(含む|contains)$/u.test(t)) return 'contains';
+      if (/^(含まない|notContains)$/u.test(t)) return 'notContains';
+      if (/^(前部一致|前方一致|startsWith)$/u.test(t)) return 'starts';
+      if (/^(後部一致|後方一致|endsWith)$/u.test(t)) return 'ends';
       return '';
     }
     if (kind === 'number') {
-      if (['同じ','==','equals'].includes(t)) return 'eq';
-      if (['異なる','!=','not'].includes(t)) return 'ne';
-      if (['以上','>='].includes(t)) return 'gte';
-      if (['以下','<='].includes(t)) return 'lte';
-      if (['未満','<'].includes(t))  return 'lt';
-      if (['より大きい','>','超'].includes(t)) return 'gt';
+      if (/^(同じ|==|equals)$/u.test(t))  return 'eq';
+      if (/^(異なる|!=|not)$/u.test(t))  return 'ne';
+      if (/^(以上|>=|≧)$/u.test(t))      return 'gte';
+      if (/^(以下|<=|≦)$/u.test(t))      return 'lte';
+      if (/^(未満|<)$/u.test(t))         return 'lt';
+      if (/^(より大きい|>|超)$/u.test(t))return 'gt';
       return '';
     }
     if (kind === 'date') {
-      if (['同じ','=='].includes(t)) return 'eq';
-      if (['以外','!='].includes(t)) return 'ne';
-      if (['以降','>='].includes(t)) return 'gte';
-      if (['以前','<='].includes(t)) return 'lte';
+      if (/^(同じ|==)$/u.test(t)) return 'eq';
+      if (/^(以外|!=)$/u.test(t)) return 'ne';
+      if (/^(以降|>=)$/u.test(t)) return 'gte';
+      if (/^(以前|<=)$/u.test(t)) return 'lte';
       return '';
     }
     return '';
   }
-  // 「OK条件」を満たさないと NG
+
+  // 「OK条件」を満たさないと NG（数値は不正値もNG）
   const ok_text = (v, op, base) => {
     const s=S(v), b=S(base); if(!op || b==='') return true;
     if(op==='eq') return s===b;
@@ -84,7 +95,10 @@
     return true;
   };
   const ok_number = (v, op, base) => {
-    const s=toNumOrNull(v), b=toNumOrNull(base); if(!op || b==null || s==null) return true;
+    if (!op) return true;
+    const s = toNumOrNull(v);
+    const b = toNumOrNull(base);
+    if (s == null || b == null) return false; // ★不正値はNG扱い
     if(op==='eq')  return s===b;
     if(op==='ne')  return s!==b;
     if(op==='gte') return s>=b;
@@ -118,7 +132,7 @@
     return {
       at: a[0] || '',
       bt: a.length > 1 ? toNumOrNull(a[1]) : null,
-      ct: a.length > 2 ? parseDateLoose(a[2]) : null,
+      ct: a.length > 2 ? parseDateLoose(a[2]) : null, // 4語目が時刻なら無視（暫定仕様）
     };
   }
 

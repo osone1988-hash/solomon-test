@@ -4,11 +4,12 @@
    - 数値：全角/カンマ/負数 対応
    - 編集レコード：サーバーにも即反映＋$revision を更新して GAIA_UN03 防止
    - 新規レコード：画面だけに反映（保存時にまとめて登録）
-   v=pc-ng-rules-2025-11-10-16
+   - 追加: DATEルール(d/dj)、TIMEルール(e/ej)、DATETIME(c/cj)の追加4条件対応
+   v=pc-ng-rules-2025-11-13-1
 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-10-16';
+  const VERSION = 'pc-ng-rules-2025-11-13-1';
   try {
     console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
     window.__TANA_PC_VERSION = VERSION;
@@ -18,7 +19,8 @@
   const JUDGE = {
     text:   { value: 'a',  op: 'aj' },  // 文字
     number: { value: 'b',  op: 'bj' },  // 数値
-    date:   { value: 'c',  op: 'cj' },  // 日時
+    date:   { value: 'c',  op: 'cj' },  // 日時(DATETIME)
+    // d/dj, e/ej は直接フィールドコードで参照（JUDGEには載せない）
   };
 
   // ---- サブテーブル ----
@@ -58,6 +60,7 @@
     const n = Number(s);
     return Number.isFinite(n) ? n : null;
   }
+
   function parseDateLoose(s){
     if (!s) return null;
     const t = S(s).trim();
@@ -70,40 +73,147 @@
     return Number.isNaN(dt.getTime()) ? null : dt;
   }
 
-  // 「OK条件」を満たさなければ NG（テキスト/数値/日時）
+  // ===== 日付／時間ユーティリティ =====
+  function dateKey(d) {
+    const y = d.getFullYear();
+    const m = ('0' + (d.getMonth() + 1)).slice(-2);
+    const day = ('0' + d.getDate()).slice(-2);
+    return `${y}-${m}-${day}`;
+  }
+
+  function timeKey(d) {
+    const h = ('0' + d.getHours()).slice(-2);
+    const m = ('0' + d.getMinutes()).slice(-2);
+    return `${h}:${m}`;
+  }
+
+  function timeToMinutes(str) {
+    if (!str) return null;
+    const m = /^(\d{1,2}):(\d{2})/.exec(S(str).trim());
+    if (!m) return null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
+    return h * 60 + min;
+  }
+
+  // 「OK条件」を満たさなければ NG（テキスト）
   const ok_text = (v, label, base) => {
     const s=S(v), b=S(base);
     if (!label || b==='') return true;
-    if (label.includes('まったく同じ') || label.includes('完全一致') || label==='==' || label==='equals') return s===b;
-    if (label.includes('含む'))      return s.includes(b);
-    if (label.includes('含まない'))  return !s.includes(b);
-    if ((label.includes('前')&&label.includes('一致'))) return s.startsWith(b);
-    if ((label.includes('後')&&label.includes('一致'))) return s.endsWith(b);
+    const mode = String(label);
+    if (mode.includes('まったく同じ') || mode.includes('完全一致') || mode==='==' || mode==='equals') return s===b;
+    if (mode.includes('含む'))      return s.includes(b);
+    if (mode.includes('含まない'))  return !s.includes(b);
+    if ((mode.includes('前')&&mode.includes('一致'))) return s.startsWith(b);
+    if ((mode.includes('後')&&mode.includes('一致'))) return s.endsWith(b);
     return true;
   };
+
+  // 「OK条件」を満たさなければ NG（数値）
   const ok_number = (scan, label, base) => {
     const s=toNumOrNull(scan), b=toNumOrNull(base);
     if (!label) return true;
     if (s==null || b==null) return false; // 値が取れない → NG
-    if (label.includes('同じ') || label==='==' || label==='equals') return s===b;
-    if (label.includes('異なる') || label==='!=')                    return s!==b;
-    if (label.includes('以上') || label.includes('>='))               return s>=b;
-    if (label.includes('以下') || label.includes('<='))               return s<=b;
-    if (label.includes('未満') || label==='<')                        return s< b;
-    if (label.includes('より大き') || label==='>')                    return s> b;
+    const mode = String(label);
+    if (mode.includes('同じ') || mode==='==' || mode==='equals') return s===b;
+    if (mode.includes('異なる') || mode==='!=')                    return s!==b;
+    if (mode.includes('以上') || mode.includes('>='))               return s>=b;
+    if (mode.includes('以下') || mode.includes('<='))               return s<=b;
+    if (mode.includes('未満') || mode==='<')                        return s< b;
+    if (mode.includes('より大き') || mode==='>')                    return s> b;
     return true;
   };
+
+  // 「OK条件」を満たさなければ NG（DATETIME：c/cj 用）
   const ok_date = (v, label, base) => {
     const sv = v instanceof Date ? v : parseDateLoose(v);
     const bv = base instanceof Date ? base : parseDateLoose(base);
     if (!label || !sv || !bv) return true;
+    const mode = String(label).trim();
+
+    const sd = dateKey(sv);
+    const bd = dateKey(bv);
+    const st = timeKey(sv);
+    const bt = timeKey(bv);
+
+    // 追加4条件（DATETIME用）
+    if (mode.includes('日付が同じ'))   return sd === bd;
+    if (mode.includes('日付が異なる')) return sd !== bd;
+    if (mode.includes('時間が同じ'))   return st === bt;
+    if (mode.includes('時間が異なる')) return st !== bt;
+
+    // 従来の4条件
     const s=sv.getTime(), b=bv.getTime();
-    if (label.includes('同じ') || label==='==') return s===b;
-    if (label.includes('以外') || label==='!=') return s!==b;
-    if (label.includes('以降') || label.includes('>=')) return s>=b;
-    if (label.includes('以前') || label.includes('<=')) return s<=b;
+    if (mode.includes('同じ') || mode==='==') return s===b;
+    if (mode.includes('以外') || mode==='!=') return s!==b;
+    if (mode.includes('以降') || mode.includes('>=')) return s>=b;
+    if (mode.includes('以前') || mode.includes('<=')) return s<=b;
     return true;
   };
+
+  // ==== DATEルール d/dj 用 ====
+  function checkDateRule(scanDt, ruleDateStr, mode) {
+    const res = { ok: true, reason: '' };
+    if (!scanDt || !ruleDateStr || !mode) return res;
+
+    const scanKey = dateKey(scanDt);      // "YYYY-MM-DD"
+    const baseKey = S(ruleDateStr).trim(); // DATEフィールド d は "YYYY-MM-DD" の想定
+
+    switch (mode) {
+      case '同じ':
+        res.ok = (scanKey === baseKey);
+        break;
+      case '以外':
+        res.ok = (scanKey !== baseKey);
+        break;
+      case '以降':
+        res.ok = (scanKey >= baseKey);
+        break;
+      case '以前':
+        res.ok = (scanKey <= baseKey);
+        break;
+      default:
+        return res; // 想定外はスキップ＝OK扱い
+    }
+
+    if (!res.ok) {
+      res.reason = `d:${mode} (scan:${scanKey}, base:${baseKey})`;
+    }
+    return res;
+  }
+
+  // ==== TIMEルール e/ej 用 ====
+  function checkTimeRule(scanDt, ruleTimeStr, mode) {
+    const res = { ok: true, reason: '' };
+    if (!scanDt || !ruleTimeStr || !mode) return res;
+
+    const scanMinutes = timeToMinutes(timeKey(scanDt));       // "HH:MM" → 分
+    const baseMinutes = timeToMinutes(S(ruleTimeStr).trim()); // e は "HH:MM" 想定
+    if (scanMinutes == null || baseMinutes == null) return res;
+
+    switch (mode) {
+      case '同じ':
+        res.ok = (scanMinutes === baseMinutes);
+        break;
+      case '以外':
+        res.ok = (scanMinutes !== baseMinutes);
+        break;
+      case '以降':
+        res.ok = (scanMinutes >= baseMinutes);
+        break;
+      case '以前':
+        res.ok = (scanMinutes <= baseMinutes);
+        break;
+      default:
+        return res;
+    }
+
+    if (!res.ok) {
+      res.reason = `e:${mode} (scan:${timeKey(scanDt)}, base:${S(ruleTimeStr).trim()})`;
+    }
+    return res;
+  }
 
   // ---- サーバーに1行追記し、返ってきた revision を画面に反映して GAIA_UN03 を防ぐ ----
   async function appendRowServer(appId, recId, rowValueOnly){
@@ -266,15 +376,25 @@
             const cVal = rec[JUDGE.date.value ]?.value ?? '';
             const cOp  = rec[JUDGE.date.op    ]?.value ?? '';
 
+            const dVal = rec.d?.value  ?? '';   // DATE
+            const dOp  = rec.dj?.value ?? '';
+            const eVal = rec.e?.value  ?? '';   // TIME
+            const eOp  = rec.ej?.value ?? '';
+
             // 判定
             const okA = ok_text(atTxt, aOp, aVal);
             const okB = ok_number(btNum, bOp, bVal);
             const okC = ok_date(ct, cOp, cVal);
 
+            const dResult = checkDateRule(ct, dVal, dOp);
+            const eResult = checkTimeRule(ct, eVal, eOp);
+
             const reasons=[];
             if(!okA) reasons.push(`a:${aOp||'-'}`);
             if(!okB) reasons.push(`b:${bOp||'-'} (scan:${btNum==null?'null':String(btNum)}, base:${bVal==null?'null':normalizeNumberString(bVal)})`);
             if(!okC) reasons.push(`c:${cOp||'-'}`);
+            if(!dResult.ok && dResult.reason) reasons.push(dResult.reason);
+            if(!eResult.ok && eResult.reason) reasons.push(eResult.reason);
 
             const result = reasons.length ? 'NG' : 'OK';
 

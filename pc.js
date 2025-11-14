@@ -6,11 +6,11 @@
    - 新規レコード：画面だけに反映（保存時にまとめて登録）
    - 追加: DATEルール(d/dj)、TIMEルール(e/ej)、DATETIME(c/cj)の追加4条件対応
    - 追加: ルール用日付 d → dt（DATE 型）、ルール用時間 e → et（TIME 型）に転記
-   v=pc-ng-rules-2025-11-13-2
+   v=pc-ng-rules-2025-11-14-1
 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-13-2';
+  const VERSION = 'pc-ng-rules-2025-11-14-1';
   try {
     console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
     window.__TANA_PC_VERSION = VERSION;
@@ -31,8 +31,8 @@
     at:     'at',
     bt:     'bt',
     ct:     'ct',
-    dt:     'dt',   // ★追加：ルール用日付 d を転記
-    et:     'et',   // ★追加：ルール用時間 e を転記
+    dt:     'dt',   // ルール用日付 d を転記
+    et:     'et',   // ルール用時間 e を転記
     result: 'result',
     reason: 'reason'
   };
@@ -43,8 +43,8 @@
     [COL.at]:     'SINGLE_LINE_TEXT',
     [COL.bt]:     'NUMBER',
     [COL.ct]:     'DATETIME',
-    [COL.dt]:     'DATE',            // ★追加
-    [COL.et]:     'TIME',            // ★追加
+    [COL.dt]:     'DATE',
+    [COL.et]:     'TIME',
     [COL.result]: 'SINGLE_LINE_TEXT',
     [COL.reason]: 'MULTI_LINE_TEXT',
   };
@@ -169,8 +169,8 @@
     const res = { ok: true, reason: '' };
     if (!scanDt || !ruleDateStr || !mode) return res;
 
-    const scanKey = dateKey(scanDt);      // "YYYY-MM-DD"
-    const baseKey = S(ruleDateStr).trim(); // d は "YYYY-MM-DD" 想定
+    const scanKey = dateKey(scanDt);         // "YYYY-MM-DD"
+    const baseKey = S(ruleDateStr).trim();   // d は "YYYY-MM-DD" 想定
 
     switch (mode) {
       case '同じ':
@@ -273,12 +273,30 @@
     kintone.app.record.set({ record: rec });
   }
 
-  // ---- SCAN文字列を「文字 数値 日時」に分解 ----
+  // ---- SCAN文字列を「文字 数値 日時」に分解（フォールバック付き） ----
   function parseScan3(raw){
-    const a = S(raw).trim().split(/\s+/).filter(Boolean);
-    const at = a.shift() || '';
-    const bt = a.length ? toNumOrNull(a.shift()) : null;
-    const ct = a.length ? parseDateLoose(a.join(' ')) : null;
+    const tokens = S(raw).trim().split(/\s+/).filter(Boolean);
+    const at = tokens.shift() || '';                 // 1つ目 = 文字
+    const bt = tokens.length ? toNumOrNull(tokens.shift()) : null; // 2つ目 = 数値
+
+    let ct = null;
+    if (tokens.length) {
+      // パターン1: 残り全部（例: "2025-11-14 00:00"）
+      const all = tokens.join(' ');
+      ct = parseDateLoose(all);
+
+      // パターン2: 先頭2つだけを日時とみなす（例: "2025-11-14 00:00 2025-11-14 00:00" → 前半だけ使う）
+      if (!ct && tokens.length >= 2) {
+        const firstTwo = tokens.slice(0,2).join(' ');
+        ct = parseDateLoose(firstTwo);
+      }
+
+      // パターン3: 先頭1つだけ（例外的フォールバック）
+      if (!ct && tokens.length >= 1) {
+        ct = parseDateLoose(tokens[0]);
+      }
+    }
+
     return { at, bt, ct };
   }
 
@@ -412,7 +430,7 @@
 
             const result = reasons.length ? 'NG' : 'OK';
 
-            // value-only 行（★ここで d/e を dt/et に転記）
+            // value-only 行（d/e を dt/et に転記）
             const rowValueOnly = {
               [COL.scanAt]: iso(new Date()),
               [COL.at]:     atTxt,
@@ -427,7 +445,7 @@
             // まず画面に反映（新規・編集共通）
             appendRowLocal(rowValueOnly);
 
-            if (st) st.text内容 = recId
+            if (st) st.textContent = recId
               ? '判定→サーバー保存中…'
               : '判定→画面に仮保存（新規レコード）';
 

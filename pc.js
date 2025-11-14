@@ -6,16 +6,29 @@
    - 新規レコード：画面だけに反映（保存時にまとめて登録）
    - DATEルール(d/dj)、TIMEルール(e/ej)、DATETIME(c/cj)の追加4条件対応
    - ルール用日付 d → dt（DATE 型）、ルール用時間 e → et（TIME 型）に転記
-   - NEW: SCAN から「c 用日時」「d/e 用日時」を分離（1つ目と2つ目で使い分け）
-   v=pc-ng-rules-2025-11-14-2
+   - NEW: QR_CONFIG に基づき「文字 / 数値 / 日時(c) / 日付+時刻(d,e)」をパース
+   v=pc-ng-rules-2025-11-14-3
 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-14-2';
+  const VERSION = 'pc-ng-rules-2025-11-14-3';
   try {
     console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
     window.__TANA_PC_VERSION = VERSION;
   } catch (_) {}
+
+  // ==== QR のレイアウト定義（将来的にサービス側で生成する想定） ====
+  // 区切り: 半角スペース
+  // フィールド順: 文字列 / 数値 / 日時(c用) / 日付+時刻(d,e用)
+  const QR_CONFIG = {
+    delimiter: /\s+/, // ※サービス側で「,」「;」「#」などに変えることを想定
+    slots: [
+      { name: 'a',  type: 'text',     tokens: 1 }, // 1番目: 文字列
+      { name: 'b',  type: 'number',   tokens: 1 }, // 2番目: 数値
+      { name: 'c',  type: 'datetime', tokens: 2 }, // 3番目: 日時 (日付+時刻) → c/ct
+      { name: 'de', type: 'datetime', tokens: 2 }, // 4番目: 日付+時刻 → d/e 判定用
+    ]
+  };
 
   // ---- 判定用フィールドコード ----
   const JUDGE = {
@@ -262,40 +275,38 @@
     kintone.app.record.set({ record: rec });
   }
 
-  // ---- SCAN を「文字 / 数値 / c用日時 / d,e用日時」に分解 ----
-  function parseScan3(raw){
-    const tokens = S(raw).trim().split(/\s+/).filter(Boolean);
-    const at = tokens.shift() || '';
-    const bt = tokens.length ? toNumOrNull(tokens.shift()) : null;
+  // ---- QR_CONFIG に従って SCAN をパース ----
+  function parseScanWithConfig(raw){
+    const tokens = S(raw).trim().split(QR_CONFIG.delimiter).filter(Boolean);
+    const out = {};
+    let idx = 0;
 
-    let ct = null;   // c 用日時
-    let ct2 = null;  // d,e 用日時（なければ null）
-
-    const rest = tokens.slice();
-
-    if (rest.length >= 4) {
-      // パターン: ... YYYY-MM-DD HH:MM YYYY-MM-DD HH:MM
-      const first  = rest[0] + ' ' + rest[1];
-      const second = rest[2] + ' ' + rest[3];
-      ct  = parseDateLoose(first);
-      ct2 = parseDateLoose(second) || null;
-    } else if (rest.length >= 2) {
-      // パターン: ... YYYY-MM-DD HH:MM
-      const first = rest[0] + ' ' + rest[1];
-      ct = parseDateLoose(first);
-    } else if (rest.length === 1) {
-      // パターン: ... YYYY-MM-DD
-      ct = parseDateLoose(rest[0]);
+    for (const slot of QR_CONFIG.slots) {
+      const slice = tokens.slice(idx, idx + slot.tokens);
+      idx += slot.tokens;
+      const joined = slice.join(' ');
+      switch (slot.type) {
+        case 'text':
+          out[slot.name] = joined;
+          break;
+        case 'number':
+          out[slot.name] = toNumOrNull(joined);
+          break;
+        case 'datetime':
+          out[slot.name] = parseDateLoose(joined);
+          break;
+        case 'date':
+          out[slot.name] = parseDateLoose(joined);
+          break;
+        case 'time':
+          out[slot.name] = joined;
+          break;
+        default:
+          out[slot.name] = joined;
+      }
     }
 
-    // 念のためのフォールバック（どれも取れなかった場合）
-    if (!ct && rest.length > 0) {
-      const all = rest.join(' ');
-      const dAll = parseDateLoose(all);
-      if (dAll) ct = dAll;
-    }
-
-    return { at, bt, ct, ct2 };
+    return out;
   }
 
   // ---- SCAN UI ----
@@ -308,7 +319,7 @@
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <strong>SCAN</strong>
         <input id="tana-scan-input" type="text" autocomplete="off"
-               placeholder="(文字) (数値) (日時c) (日時d/e) の順に入力 → Enter"
+               placeholder="(文字) (数値) (日時c:日付 時刻) (日時d/e:日付 時刻) → Enter"
                style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
         <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
         <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY (${placeTag})</span>
@@ -385,13 +396,14 @@
           if (!appId || !rec) { if (st) st.textContent='ERROR: no app/record'; return; }
 
           try{
-            const { at, bt, ct, ct2 } = parseScan3(ip.value);
-            const scanDtForC  = ct;
-            const scanDtForDE = ct2 || ct; // d/e 用は2つ目があればそちら、なければ c と同じ
+            const parsed = parseScanWithConfig(ip.value);
 
-            const atTxt=S(at);
-            const btNum=bt;
-            const ctIso=scanDtForC? iso(scanDtForC): null;
+            const scanDtForC  = parsed.c || null;
+            const scanDtForDE = parsed.de || parsed.c || null;
+
+            const atTxt = S(parsed.a);
+            const btNum = parsed.b;
+            const ctIso = scanDtForC ? iso(scanDtForC) : null;
 
             const aVal = rec[JUDGE.text.value ]?.value ?? '';
             const aOp  = rec[JUDGE.text.op    ]?.value ?? '';

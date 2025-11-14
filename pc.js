@@ -5,11 +5,12 @@
    - 編集レコード：サーバーにも即反映＋$revision を更新して GAIA_UN03 防止
    - 新規レコード：画面だけに反映（保存時にまとめて登録）
    - 追加: DATEルール(d/dj)、TIMEルール(e/ej)、DATETIME(c/cj)の追加4条件対応
-   v=pc-ng-rules-2025-11-13-1
+   - 追加: ルール用日付 d → dt（DATE 型）、ルール用時間 e → et（TIME 型）に転記
+   v=pc-ng-rules-2025-11-13-2
 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-13-1';
+  const VERSION = 'pc-ng-rules-2025-11-13-2';
   try {
     console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
     window.__TANA_PC_VERSION = VERSION;
@@ -25,7 +26,16 @@
 
   // ---- サブテーブル ----
   const TABLE = 'scan_table';
-  const COL   = { scanAt:'scan_at', at:'at', bt:'bt', ct:'ct', result:'result', reason:'reason' };
+  const COL   = {
+    scanAt: 'scan_at',
+    at:     'at',
+    bt:     'bt',
+    ct:     'ct',
+    dt:     'dt',   // ★追加：ルール用日付 d を転記
+    et:     'et',   // ★追加：ルール用時間 e を転記
+    result: 'result',
+    reason: 'reason'
+  };
 
   // ---- サブテーブル列タイプ（画面側の型を決める）----
   const FIELD_TYPES = {
@@ -33,6 +43,8 @@
     [COL.at]:     'SINGLE_LINE_TEXT',
     [COL.bt]:     'NUMBER',
     [COL.ct]:     'DATETIME',
+    [COL.dt]:     'DATE',            // ★追加
+    [COL.et]:     'TIME',            // ★追加
     [COL.result]: 'SINGLE_LINE_TEXT',
     [COL.reason]: 'MULTI_LINE_TEXT',
   };
@@ -158,7 +170,7 @@
     if (!scanDt || !ruleDateStr || !mode) return res;
 
     const scanKey = dateKey(scanDt);      // "YYYY-MM-DD"
-    const baseKey = S(ruleDateStr).trim(); // DATEフィールド d は "YYYY-MM-DD" の想定
+    const baseKey = S(ruleDateStr).trim(); // d は "YYYY-MM-DD" 想定
 
     switch (mode) {
       case '同じ':
@@ -251,6 +263,8 @@
       let val = rowValueOnly[code];
       if (type==='NUMBER'   && val!=='') val = String(val);
       if (type==='DATETIME' && val)      val = String(val);
+      if (type==='DATE'     && val)      val = String(val);
+      if (type==='TIME'     && val)      val = String(val);
       clientRow[code] = { type, value: val };
     });
 
@@ -398,12 +412,14 @@
 
             const result = reasons.length ? 'NG' : 'OK';
 
-            // value-only 行
+            // value-only 行（★ここで d/e を dt/et に転記）
             const rowValueOnly = {
               [COL.scanAt]: iso(new Date()),
               [COL.at]:     atTxt,
               [COL.bt]:     btNum==null? '' : String(btNum),
               [COL.ct]:     ctIso,
+              [COL.dt]:     dVal || '',
+              [COL.et]:     eVal || '',
               [COL.result]: result,
               [COL.reason]: reasons.join(' / ')
             };
@@ -411,7 +427,7 @@
             // まず画面に反映（新規・編集共通）
             appendRowLocal(rowValueOnly);
 
-            if (st) st.textContent = recId
+            if (st) st.text内容 = recId
               ? '判定→サーバー保存中…'
               : '判定→画面に仮保存（新規レコード）';
 

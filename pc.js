@@ -1,491 +1,505 @@
-/* TANA-OROSHI pc.js (単純区切り型・日付/時間を別型で扱う版)
-   - scan_area に SCAN UI を表示（全レコード / 新規・編集両対応）
-   - SCAN → サブテーブルに追記（複数理由を reason に出力）
-   - 数値：全角/カンマ/負数 対応
-   - 編集レコード：サーバーにも即反映＋$revision を更新して GAIA_UN03 防止
-   - 新規レコード：画面だけに反映（保存時にまとめて登録）
-   - DATEルール(d/dj)、TIMEルール(e/ej)、DATETIME(c/cj)の追加4条件対応
-   - ルール用日付 d → dt（DATE 型）、ルール用時間 e → et（TIME 型）に転記（値は判定ルールの値）
-   - NEW: 日付(d) と 時刻(e) を最初から別型として扱う
-     QR 配列: [文字列] [数値] [日時(c:日付 時刻)] [日付(d)] [時刻(e)]
-   v=pc-ng-rules-2025-11-14-4
-*/
+// TANA-OROSHI / 単純区切り型スキャナ
+// version:
+window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-20';
+
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-14-4';
-  try {
-    console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
-    window.__TANA_PC_VERSION = VERSION;
-  } catch (_) {}
 
-  // ==== QR のレイアウト定義（将来的にサービス側で生成する想定） ====
-  // 区切り: 半角スペース
-  // フィールド順:
-  //   1) 文字列 (a)
-  //   2) 数値   (b)
-  //   3) 日時   (c: 日付 + 時刻 → 2トークン)
-  //   4) 日付   (d: 1トークン)
-  //   5) 時刻   (e: 1トークン)
-  const QR_CONFIG = {
-    delimiter: /\s+/, // ※サービス側で「,」「;」「#」などに変える想定も可能
-    slots: [
-      { name: 'a', type: 'text',     tokens: 1 }, // 1番目: 文字列
-      { name: 'b', type: 'number',   tokens: 1 }, // 2番目: 数値
-      { name: 'c', type: 'datetime', tokens: 2 }, // 3番目: 日時 (日付+時刻) → c/ct
-      { name: 'd', type: 'date',     tokens: 1 }, // 4番目: 日付 → dルール用
-      { name: 'e', type: 'time',     tokens: 1 }, // 5番目: 時刻 → eルール用
-    ]
+  // ===== 設定 =====
+  const CFG = {
+    spaceId: 'scan_area',
+    tableCode: 'scan_table',
+    tableFields: {
+      scanAt: 'scan_at',
+      a: 'at',
+      b: 'bt',
+      c: 'ct',   // DATETIME
+      d: 'dt',   // DATE
+      e: 'et',   // TIME
+      result: 'result',
+      reason: 'reason',
+    },
+    ruleFields: {
+      a: 'a',
+      aj: 'aj',
+      b: 'b',
+      bj: 'bj',
+      c: 'c',
+      cj: 'cj',
+      d: 'd',
+      dj: 'dj',
+      e: 'e',
+      ej: 'ej',
+    },
+    delimiter: /\s+/, // 半角スペース（連続もOK）
   };
 
-  // ---- 判定用フィールドコード ----
-  const JUDGE = {
-    text:   { value: 'a',  op: 'aj' },  // 文字
-    number: { value: 'b',  op: 'bj' },  // 数値
-    date:   { value: 'c',  op: 'cj' },  // 日時(DATETIME)
-    // d/dj, e/ej は直接フィールドコードで参照
-  };
+  // ===== ユーティリティ =====
 
-  // ---- サブテーブル ----
-  const TABLE = 'scan_table';
-  const COL   = {
-    scanAt: 'scan_at',
-    at:     'at',
-    bt:     'bt',
-    ct:     'ct',   // c用の日時（スキャンから）
-    dt:     'dt',   // ルール用日付 d を転記（d の値）
-    et:     'et',   // ルール用時間 e を転記（e の値）
-    result: 'result',
-    reason: 'reason'
-  };
-
-  // ---- サブテーブル列タイプ ----
-  const FIELD_TYPES = {
-    [COL.scanAt]: 'DATETIME',
-    [COL.at]:     'SINGLE_LINE_TEXT',
-    [COL.bt]:     'NUMBER',
-    [COL.ct]:     'DATETIME',
-    [COL.dt]:     'DATE',
-    [COL.et]:     'TIME',
-    [COL.result]: 'SINGLE_LINE_TEXT',
-    [COL.reason]: 'MULTI_LINE_TEXT',
-  };
-
-  const SCAN_SPACE_ID = 'scan_area';
-
-  // ===== Utils =====
-  const $id = (id) => document.getElementById(id);
-  const S   = (v) => (v == null ? '' : String(v));
-  const iso = (d) => (d ? new Date(d).toISOString() : null);
-
-  function normalizeNumberString(v) {
-    const map = {
-      '０':'0','１':'1','２':'2','３':'3','４':'4',
-      '５':'5','６':'6','７':'7','８':'8','９':'9',
-      '．':'.','－':'-','−':'-'
-    };
-    return S(v).replace(/[０-９．－−,]/g, ch => ch === ',' ? '' : (map[ch] ?? ch)).trim();
-  }
-  function toNumOrNull(v){
-    const s = normalizeNumberString(v);
-    if (!s || !/^-?\d+(?:\.\d+)?$/.test(s)) return null;
-    const n = Number(s);
-    return Number.isFinite(n) ? n : null;
+  function nowAsKintoneDateTime() {
+    // ブラウザローカル → ISO (kintone形式)
+    return new Date().toISOString();
   }
 
-  function parseDateLoose(s){
-    if (!s) return null;
-    const t = S(s).trim();
-    if (/^\d{8}$/.test(t)) { // 20251109
-      const y=+t.slice(0,4), m=+t.slice(4,6)-1, d=+t.slice(6,8);
-      const dt=new Date(y,m,d);
-      return Number.isNaN(dt.getTime()) ? null : dt;
-    }
-    const dt=new Date(t.replace(/\//g,'-'));
+  function toKintoneDateTime(dateStr, timeStr) {
+    // 'YYYY-MM-DD' + 'HH:mm' → ISO文字列（JST前提）
+    if (!dateStr || !timeStr) return null;
+    const dt = new Date(`${dateStr}T${timeStr}:00+09:00`);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toISOString();
+  }
+
+  function parseDateToLocal(dateStr) {
+    if (!dateStr) return null;
+    const dt = new Date(`${dateStr}T00:00:00+09:00`);
     return Number.isNaN(dt.getTime()) ? null : dt;
   }
 
-  function dateKey(d) {
-    const y = d.getFullYear();
-    const m = ('0' + (d.getMonth() + 1)).slice(-2);
-    const day = ('0' + d.getDate()).slice(-2);
-    return `${y}-${m}-${day}`;
-  }
-  function timeKey(d) {
-    const h = ('0' + d.getHours()).slice(-2);
-    const m = ('0' + d.getMinutes()).slice(-2);
-    return `${h}:${m}`;
-  }
-  function timeToMinutes(str) {
-    if (!str) return null;
-    const m = /^(\d{1,2}):(\d{2})$/.exec(S(str).trim());
+  function parseTimeToMinutes(timeStr) {
+    if (!timeStr) return null;
+    const m = /^(\d{2}):(\d{2})$/.exec(timeStr);
     if (!m) return null;
     const h = Number(m[1]);
-    const min = Number(m[2]);
-    if (!Number.isFinite(h) || !Number.isFinite(min)) return null;
-    return h * 60 + min;
+    const mm = Number(m[2]);
+    if (
+      Number.isNaN(h) ||
+      Number.isNaN(mm) ||
+      h < 0 ||
+      h > 23 ||
+      mm < 0 ||
+      mm > 59
+    ) {
+      return null;
+    }
+    return h * 60 + mm;
   }
 
-  // ---- 判定ロジック ----
-  const ok_text = (v, label, base) => {
-    const s=S(v), b=S(base);
-    if (!label || b==='') return true;
-    const mode = String(label);
-    if (mode.includes('まったく同じ') || mode.includes('完全一致') || mode==='==' || mode==='equals') return s===b;
-    if (mode.includes('含む'))      return s.includes(b);
-    if (mode.includes('含まない'))  return !s.includes(b);
-    if ((mode.includes('前')&&mode.includes('一致'))) return s.startsWith(b);
-    if ((mode.includes('後')&&mode.includes('一致'))) return s.endsWith(b);
-    return true;
-  };
+  function sameYMD(a, b) {
+    return (
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate()
+    );
+  }
 
-  const ok_number = (scan, label, base) => {
-    const s=toNumOrNull(scan), b=toNumOrNull(base);
-    if (!label) return true;
-    if (s==null || b==null) return false;
-    const mode = String(label);
-    if (mode.includes('同じ') || mode==='==' || mode==='equals') return s===b;
-    if (mode.includes('異なる') || mode==='!=')                    return s!==b;
-    if (mode.includes('以上') || mode.includes('>='))               return s>=b;
-    if (mode.includes('以下') || mode.includes('<='))               return s<=b;
-    if (mode.includes('未満') || mode==='<')                        return s< b;
-    if (mode.includes('より大き') || mode==='>')                    return s> b;
-    return true;
-  };
+  function sameHM(a, b) {
+    return a.getHours() === b.getHours() && a.getMinutes() === b.getMinutes();
+  }
 
-  // c/cj 用（DATETIME）
-  const ok_date = (v, label, base) => {
-    const sv = v instanceof Date ? v : parseDateLoose(v);
-    const bv = base instanceof Date ? base : parseDateLoose(base);
-    if (!label || !sv || !bv) return true;
-    const mode = String(label).trim();
+  function field(record, code) {
+    return record[code] || { value: '' };
+  }
 
-    const sd = dateKey(sv);
-    const bd = dateKey(bv);
-    const st = timeKey(sv);
-    const bt = timeKey(bv);
+  // ===== 判定ロジック =====
 
-    if (mode.includes('日付が同じ'))   return sd === bd;
-    if (mode.includes('日付が異なる')) return sd !== bd;
-    if (mode.includes('時間が同じ'))   return st === bt;
-    if (mode.includes('時間が異なる')) return st !== bt;
+  function checkText(scanText, baseText, op) {
+    if (!op || op === '指定なし') return null;
+    if (!baseText) return null;
 
-    const s=sv.getTime(), b=bv.getTime();
-    if (mode.includes('同じ') || mode==='==') return s===b;
-    if (mode.includes('以外') || mode==='!=') return s!==b;
-    if (mode.includes('以降') || mode.includes('>=')) return s>=b;
-    if (mode.includes('以前') || mode.includes('<=')) return s<=b;
-    return true;
-  };
+    const s = String(scanText ?? '');
+    const b = String(baseText ?? '');
+    let ok = true;
 
-  // d/dj 用（DATE）
-  function checkDateRule(scanDt, ruleDateStr, mode) {
-    const res = { ok: true, reason: '' };
-    if (!scanDt || !ruleDateStr || !mode) return res;
-
-    const scanKey = dateKey(scanDt);
-    const baseKey = S(ruleDateStr).trim();
-
-    switch (mode) {
-      case '同じ':
-        res.ok = (scanKey === baseKey);
+    switch (op) {
+      case 'まったく同じ':
+        ok = s === b;
         break;
-      case '以外':
-        res.ok = (scanKey !== baseKey);
+      case '含む':
+        ok = s.includes(b);
         break;
-      case '以降':
-        res.ok = (scanKey >= baseKey);
+      case '含まない':
+        ok = !s.includes(b);
         break;
-      case '以前':
-        res.ok = (scanKey <= baseKey);
+      case '前部一致':
+      case '前方一致':
+        ok = s.startsWith(b);
+        break;
+      case '後部一致':
+      case '後方一致':
+        ok = s.endsWith(b);
         break;
       default:
-        return res;
+        return null;
     }
-    if (!res.ok) {
-      res.reason = `d:${mode} (scan:${scanKey}, base:${baseKey})`;
-    }
-    return res;
+
+    return ok ? null : `a:${op}`;
   }
 
-  // e/ej 用（TIME）: 「スキャン側の時間文字列」と「ルール時間文字列」を比較
-  function checkTimeRule(scanTimeStr, ruleTimeStr, mode) {
-    const res = { ok: true, reason: '' };
-    if (!scanTimeStr || !ruleTimeStr || !mode) return res;
+  function checkNumber(scanNum, baseNum, op) {
+    if (!op || op === '指定なし') return null;
+    if (baseNum == null || Number.isNaN(baseNum)) return null;
+    if (scanNum == null || Number.isNaN(scanNum)) {
+      return `b:${op} (scan:NaN, base:${baseNum})`;
+    }
 
-    const scanMinutes = timeToMinutes(scanTimeStr);
-    const baseMinutes = timeToMinutes(ruleTimeStr);
-    if (scanMinutes == null || baseMinutes == null) return res;
-
-    switch (mode) {
+    let ok = true;
+    switch (op) {
       case '同じ':
-        res.ok = (scanMinutes === baseMinutes);
+        ok = scanNum === baseNum;
         break;
-      case '以外':
-        res.ok = (scanMinutes !== baseMinutes);
+      case '異なる':
+        ok = scanNum !== baseNum;
         break;
-      case '以降':
-        res.ok = (scanMinutes >= baseMinutes);
+      case '以上':
+        ok = scanNum >= baseNum;
         break;
-      case '以前':
-        res.ok = (scanMinutes <= baseMinutes);
+      case '以下':
+        ok = scanNum <= baseNum;
+        break;
+      case 'より大きい':
+        ok = scanNum > baseNum;
+        break;
+      case '未満':
+        ok = scanNum < baseNum;
         break;
       default:
-        return res;
+        return null;
     }
-    if (!res.ok) {
-      res.reason = `e:${mode} (scan:${scanTimeStr}, base:${S(ruleTimeStr).trim()})`;
-    }
-    return res;
+
+    return ok ? null : `b:${op} (scan:${scanNum}, base:${baseNum})`;
   }
 
-  // ---- サーバーに1行追記 + $revision 更新 ----
-  async function appendRowServer(appId, recId, rowValueOnly){
-    const url = kintone.api.url('/k/v1/record.json', true);
-    const { record } = await kintone.api(url,'GET',{ app:appId, id:recId });
-    const curr = Array.isArray(record[TABLE]?.value) ? record[TABLE].value : [];
-    const next = curr.concat([{ value: rowValueOnly }]);
-    const putRes = await kintone.api(url,'PUT',{
-      app: appId,
-      id:  recId,
-      record: { [TABLE]: { value: next } }
+  function checkDateTime(scanDt, baseDt, op, label) {
+    if (!op || op === '指定なし') return null;
+    if (!baseDt || !scanDt) {
+      return `${label}:${op} (scan:${scanDt ? scanDt.toISOString() : 'NaN'}, base:${baseDt ? baseDt.toISOString() : 'NaN'})`;
+    }
+
+    let ok = true;
+    switch (op) {
+      case '同じ':
+        ok = scanDt.getTime() === baseDt.getTime();
+        break;
+      case '以外':
+        ok = scanDt.getTime() !== baseDt.getTime();
+        break;
+      case '以降':
+        ok = scanDt.getTime() >= baseDt.getTime();
+        break;
+      case '以前':
+        ok = scanDt.getTime() <= baseDt.getTime();
+        break;
+      case '日付が同じ':
+        ok = sameYMD(scanDt, baseDt);
+        break;
+      case '日付が異なる':
+        ok = !sameYMD(scanDt, baseDt);
+        break;
+      case '時間が同じ':
+        ok = sameHM(scanDt, baseDt);
+        break;
+      case '時間が異なる':
+        ok = !sameHM(scanDt, baseDt);
+        break;
+      default:
+        return null;
+    }
+
+    if (ok) return null;
+    return `${label}:${op}`;
+  }
+
+  function checkDate(scanDate, baseDate, op, label) {
+    if (!op || op === '指定なし') return null;
+    if (!baseDate || !scanDate) {
+      return `${label}:${op} (scan:${scanDate ? scanDate.toISOString() : 'NaN'}, base:${baseDate ? baseDate.toISOString() : 'NaN'})`;
+    }
+
+    let ok = true;
+    const s = scanDate.getTime();
+    const b = baseDate.getTime();
+
+    switch (op) {
+      case '同じ':
+        ok = s === b;
+        break;
+      case '以外':
+        ok = s !== b;
+        break;
+      case '以降':
+        ok = s >= b;
+        break;
+      case '以前':
+        ok = s <= b;
+        break;
+      default:
+        return null;
+    }
+
+    if (ok) return null;
+    return `${label}:${op}`;
+  }
+
+  function checkTime(scanMinutes, baseMinutes, op, label) {
+    if (!op || op === '指定なし') return null;
+    if (baseMinutes == null || scanMinutes == null) {
+      return `${label}:${op} (scan:${scanMinutes}, base:${baseMinutes})`;
+    }
+
+    let ok = true;
+    const s = scanMinutes;
+    const b = baseMinutes;
+
+    switch (op) {
+      case '同じ':
+        ok = s === b;
+        break;
+      case '以外':
+        ok = s !== b;
+        break;
+      case '以降':
+        ok = s >= b;
+        break;
+      case '以前':
+        ok = s <= b;
+        break;
+      default:
+        return null;
+    }
+
+    if (ok) return null;
+    return `${label}:${op} (scan:${s}, base:${b})`;
+  }
+
+  function evaluateAll(record, parsed) {
+    const rf = CFG.ruleFields;
+
+    const aBase = field(record, rf.a).value;
+    const ajVal = field(record, rf.aj).value;
+    const bBase =
+      field(record, rf.b).value === ''
+        ? null
+        : Number(field(record, rf.b).value);
+    const bjVal = field(record, rf.bj).value;
+
+    const cBaseRaw = field(record, rf.c).value;
+    const cjVal = field(record, rf.cj).value;
+
+    const dBaseRaw = field(record, rf.d).value; // 'YYYY-MM-DD'
+    const djVal = field(record, rf.dj).value;
+
+    const eBaseRaw = field(record, rf.e).value; // 'HH:mm'
+    const ejVal = field(record, rf.ej).value;
+
+    const reasons = [];
+
+    // a: 文字列
+    const rText = checkText(parsed.aText, aBase, ajVal);
+    if (rText) reasons.push(rText);
+
+    // b: 数値
+    const rNum = checkNumber(parsed.bNumber, bBase, bjVal);
+    if (rNum) reasons.push(rNum);
+
+    // c: 日時
+    let scanC = null;
+    let baseC = null;
+    if (parsed.cDateTimeIso) {
+      scanC = new Date(parsed.cDateTimeIso);
+    }
+    if (cBaseRaw) {
+      baseC = new Date(cBaseRaw);
+    }
+    const rC = checkDateTime(scanC, baseC, cjVal, 'c');
+    if (rC) reasons.push(rC);
+
+    // d: DATE
+    const scanDDate = parsed.dDateStr ? parseDateToLocal(parsed.dDateStr) : null;
+    const baseDDate = dBaseRaw ? parseDateToLocal(dBaseRaw) : null;
+    const rD = checkDate(scanDDate, baseDDate, djVal, 'd');
+    if (rD) reasons.push(rD);
+
+    // e: TIME
+    const scanE = parsed.eMinutes;
+    const baseE = parseTimeToMinutes(eBaseRaw);
+    const rE = checkTime(scanE, baseE, ejVal, 'e');
+    if (rE) reasons.push(rE);
+
+    return {
+      ok: reasons.length === 0,
+      reasons,
+    };
+  }
+
+  // ===== SCAN パース =====
+
+  function parseScanText(raw) {
+    const text = (raw || '').trim();
+    if (!text) {
+      throw new Error('SCAN が空です');
+    }
+
+    const tokens = text.split(CFG.delimiter);
+    if (tokens.length < 6) {
+      throw new Error('SCAN のトークン数が足りません（最低6個必要）');
+    }
+
+    const [aText, bToken, cDateStr, cTimeStr, dDateStr, eTimeStr] = tokens;
+
+    const bNumber = Number(bToken);
+    if (Number.isNaN(bNumber)) {
+      throw new Error(`数値トークンが不正です (b="${bToken}")`);
+    }
+
+    const cDateTimeIso = toKintoneDateTime(cDateStr, cTimeStr);
+    if (!cDateTimeIso) {
+      throw new Error(
+        `日時トークンが不正です (c="${cDateStr} ${cTimeStr}")`
+      );
+    }
+
+    // DATE 形式ざっくりチェック
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dDateStr)) {
+      throw new Error(`日付トークンが不正です (d="${dDateStr}")`);
+    }
+
+    // TIME 形式ざっくりチェック
+    if (!/^\d{2}:\d{2}$/.test(eTimeStr)) {
+      throw new Error(`時刻トークンが不正です (e="${eTimeStr}")`);
+    }
+    const eMinutes = parseTimeToMinutes(eTimeStr);
+    if (eMinutes == null) {
+      throw new Error(`時刻トークンが不正です (e="${eTimeStr}")`);
+    }
+
+    return {
+      raw,
+      aText,
+      bNumber,
+      cDateStr,
+      cTimeStr,
+      cDateTimeIso,
+      dDateStr,
+      eTimeStr,
+      eMinutes,
+    };
+  }
+
+  // ===== サブテーブル行 追加 =====
+
+  function appendRow(record, parsed, evalResult) {
+    const tf = CFG.tableFields;
+    const table = field(record, CFG.tableCode);
+    if (!table.value) table.value = [];
+
+    const scanAtIso = nowAsKintoneDateTime();
+
+    const row = {
+      value: {},
+    };
+
+    row.value[tf.scanAt] = {
+      type: 'DATETIME',
+      value: scanAtIso,
+    };
+    row.value[tf.a] = {
+      type: 'SINGLE_LINE_TEXT',
+      value: parsed.aText,
+    };
+    row.value[tf.b] = {
+      type: 'NUMBER',
+      value:
+        parsed.bNumber == null || Number.isNaN(parsed.bNumber)
+          ? ''
+          : String(parsed.bNumber),
+    };
+    row.value[tf.c] = {
+      type: 'DATETIME',
+      value: parsed.cDateTimeIso,
+    };
+    row.value[tf.d] = {
+      type: 'DATE',
+      value: parsed.dDateStr,
+    };
+    row.value[tf.e] = {
+      type: 'TIME',
+      value: parsed.eTimeStr,
+    };
+    row.value[tf.result] = {
+      type: 'SINGLE_LINE_TEXT',
+      value: evalResult.ok ? 'OK' : 'NG',
+    };
+    row.value[tf.reason] = {
+      type: 'MULTI_LINE_TEXT',
+      value: evalResult.reasons.join(' / '),
+    };
+
+    table.value.push(row);
+  }
+
+  // ===== UI =====
+
+  function buildScanArea(event) {
+    const space = kintone.app.record.getSpaceElement(CFG.spaceId);
+    if (!space) return;
+
+    // 2回目以降の表示で重複しないようにクリア
+    while (space.firstChild) {
+      space.removeChild(space.firstChild);
+    }
+
+    const wrapper = document.createElement('div');
+
+    const label = document.createElement('span');
+    label.textContent = 'SCAN　(文字) (数値) (日時) (DATE) (時間) の順に入力 → Enter　';
+    wrapper.appendChild(label);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.style.width = '60%';
+    wrapper.appendChild(input);
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.textContent = 'クリア';
+    clearBtn.style.marginLeft = '8px';
+    wrapper.appendChild(clearBtn);
+
+    const status = document.createElement('span');
+    status.style.marginLeft = '8px';
+    status.textContent = `READY (space:${CFG.spaceId})`;
+    wrapper.appendChild(status);
+
+    space.appendChild(wrapper);
+
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      status.textContent = `READY (space:${CFG.spaceId})`;
     });
-    try {
+
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+
+      const raw = input.value;
       const appRec = kintone.app.record.get();
-      if (appRec && appRec.record && appRec.record.$revision) {
-        appRec.record.$revision.value = putRes.revision;
-        kintone.app.record.set(appRec);
+      const record = appRec.record;
+
+      let parsed;
+      try {
+        parsed = parseScanText(raw);
+      } catch (e) {
+        status.textContent = `NG: ${e.message}`;
+        return;
       }
-    } catch (e) {
-      console.warn('[TANA] failed to update revision:', e);
-    }
-  }
 
-  // ---- 画面側サブテーブルに1行追加 ----
-  function appendRowLocal(rowValueOnly){
-    const appRec = kintone.app.record.get(); if(!appRec||!appRec.record) return;
-    const rec = appRec.record;
-    const curr = Array.isArray(rec[TABLE]?.value) ? rec[TABLE].value : [];
+      const evalResult = evaluateAll(record, parsed);
+      appendRow(record, parsed, evalResult);
 
-    const clientRow = {};
-    Object.keys(rowValueOnly).forEach(code=>{
-      const type = FIELD_TYPES[code] || 'SINGLE_LINE_TEXT';
-      let val = rowValueOnly[code];
-      if (type==='NUMBER'   && val!=='') val = String(val);
-      if (type==='DATETIME' && val)      val = String(val);
-      if (type==='DATE'     && val)      val = String(val);
-      if (type==='TIME'     && val)      val = String(val);
-      clientRow[code] = { type, value: val };
+      kintone.app.record.set(appRec);
+
+      status.textContent = evalResult.ok ? 'OK' : 'NG';
+      input.value = '';
     });
-
-    const next = curr.concat([{ value: clientRow }]);
-    rec[TABLE] = { type: 'SUBTABLE', value: next };
-    kintone.app.record.set({ record: rec });
   }
 
-  // ---- QR_CONFIG に従って SCAN をパース（a/b/c/d/e 別々に型変換） ----
-  function parseScanWithConfig(raw){
-    const tokens = S(raw).trim().split(QR_CONFIG.delimiter).filter(Boolean);
-    const out = {};
-    let idx = 0;
+  // ===== イベント登録 =====
 
-    for (const slot of QR_CONFIG.slots) {
-      const slice = tokens.slice(idx, idx + slot.tokens);
-      idx += slot.tokens;
-      const joined = slice.join(' ');
-      switch (slot.type) {
-        case 'text':
-          out[slot.name] = joined;
-          break;
-        case 'number':
-          out[slot.name] = toNumOrNull(joined);
-          break;
-        case 'datetime':
-          out[slot.name] = parseDateLoose(joined); // "YYYY-MM-DD HH:MM"
-          break;
-        case 'date':
-          out[slot.name] = parseDateLoose(joined); // 日付だけ
-          break;
-        case 'time':
-          out[slot.name] = joined;                 // "HH:MM" として扱う
-          break;
-        default:
-          out[slot.name] = joined;
-      }
+  kintone.events.on(
+    ['app.record.create.show', 'app.record.edit.show'],
+    function (event) {
+      buildScanArea(event);
+      return event;
     }
-
-    return out;
-  }
-
-  // ---- SCAN UI ----
-  function mountScanUI(targetEl, placeTag){
-    document.querySelectorAll('#tana-scan-wrap').forEach(n=>n.remove());
-    const wrap=document.createElement('div');
-    wrap.id='tana-scan-wrap';
-    wrap.style.cssText='margin:8px 0;padding:8px;border:1px solid #e5e7eb;border-radius:8px;background:#fff;';
-    wrap.innerHTML=`
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <strong>SCAN</strong>
-        <input id="tana-scan-input" type="text" autocomplete="off"
-               placeholder="(文字) (数値) (日時c:日付 時刻) (日付d) (時刻e) → Enter"
-               style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
-        <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
-        <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY (${placeTag})</span>
-      </div>`;
-    targetEl.appendChild(wrap);
-  }
-
-  async function ensureScanUI() {
-    const tryGetSpace = () => kintone.app.record.getSpaceElement?.(SCAN_SPACE_ID) || null;
-    let anchor = tryGetSpace();
-    let place = '';
-
-    if (!anchor) {
-      const start = performance.now();
-      while (!anchor && performance.now() - start < 3000) {
-        await new Promise(r => setTimeout(r, 50));
-        anchor = tryGetSpace();
-      }
-    }
-    if (anchor) { place='space:'+SCAN_SPACE_ID; mountScanUI(anchor, place); return; }
-
-    const cjEl = kintone.app.record.getFieldElement?.(JUDGE.date.op);
-    if (cjEl && cjEl.parentElement && cjEl.parentElement.parentElement) {
-      const row=cjEl.parentElement.parentElement;
-      const div=document.createElement('div');
-      row.parentElement.insertBefore(div,row.nextSibling);
-      place='after_cj';
-      mountScanUI(div, place);
-      return;
-    }
-    const tableEl = kintone.app.record.getFieldElement?.(TABLE);
-    if (tableEl && tableEl.parentElement && tableEl.parentElement.parentElement) {
-      const block=tableEl.parentElement.parentElement;
-      const div=document.createElement('div');
-      block.parentElement.insertBefore(div, block);
-      place='before_table';
-      mountScanUI(div, place);
-      return;
-    }
-    const div=document.createElement('div');
-    document.body.appendChild(div);
-    place='body_fallback';
-    mountScanUI(div, place);
-  }
-
-  const SHOW_EVENTS = ['app.record.edit.show', 'app.record.create.show'];
-
-  kintone.events.on(SHOW_EVENTS, (event)=>{
-    try{
-      ensureScanUI();
-
-      if (!window.__TANA_SCAN_BOUND__){
-        window.__TANA_SCAN_BOUND__ = true;
-
-        document.addEventListener('click',(ev)=>{
-          const t=ev.target; if(!(t instanceof HTMLElement)) return;
-          if (t.id==='tana-scan-clear'){
-            const ip=$id('tana-scan-input'); if (ip) { ip.value=''; ip.focus(); }
-            const st=$id('tana-scan-status'); if (st) st.textContent='READY';
-          }
-        }, true);
-
-        document.addEventListener('keydown', async (ev)=>{
-          const ip=$id('tana-scan-input');
-          if (!ip || ev.target!==ip || ev.key!=='Enter') return;
-          ev.preventDefault(); ev.stopPropagation(); ev.stopImmediatePropagation();
-
-          const st=$id('tana-scan-status');
-          const appId=kintone.app.getId?.();
-          const recWrap=kintone.app.record.get();
-          const rec=recWrap?.record || event.record;
-          const recId = rec?.$id?.value;
-
-          if (!appId || !rec) { if (st) st.textContent='ERROR: no app/record'; return; }
-
-          try{
-            const parsed = parseScanWithConfig(ip.value);
-
-            const scanDtForC = parsed.c || null;         // Date | null
-            const scanDtForD = parsed.d || null;         // Date | null
-            const scanTimeE  = parsed.e || '';           // "HH:MM" | ''
-
-            const atTxt = S(parsed.a);
-            const btNum = parsed.b;
-            const ctIso = scanDtForC ? iso(scanDtForC) : null;
-
-            const aVal = rec[JUDGE.text.value ]?.value ?? '';
-            const aOp  = rec[JUDGE.text.op    ]?.value ?? '';
-            const bVal = rec[JUDGE.number.value]?.value ?? '';
-            const bOp  = rec[JUDGE.number.op   ]?.value ?? '';
-            const cVal = rec[JUDGE.date.value ]?.value ?? '';
-            const cOp  = rec[JUDGE.date.op    ]?.value ?? '';
-
-            const dVal = rec.d?.value  ?? '';
-            const dOp  = rec.dj?.value ?? '';
-            const eVal = rec.e?.value  ?? '';
-            const eOp  = rec.ej?.value ?? '';
-
-            const okA = ok_text(atTxt, aOp, aVal);
-            const okB = ok_number(btNum, bOp, bVal);
-            const okC = ok_date(scanDtForC, cOp, cVal);
-
-            const dResult = scanDtForD ? checkDateRule(scanDtForD, dVal, dOp) : { ok: true, reason: '' };
-            const eResult = scanTimeE  ? checkTimeRule(scanTimeE,  eVal, eOp) : { ok: true, reason: '' };
-
-            const reasons=[];
-            if(!okA) reasons.push(`a:${aOp||'-'}`);
-            if(!okB) reasons.push(`b:${bOp||'-'} (scan:${btNum==null?'null':String(btNum)}, base:${bVal==null?'null':normalizeNumberString(bVal)})`);
-            if(!okC) reasons.push(`c:${cOp||'-'}`);
-            if(!dResult.ok && dResult.reason) reasons.push(dResult.reason);
-            if(!eResult.ok && eResult.reason) reasons.push(eResult.reason);
-
-            const result = reasons.length ? 'NG' : 'OK';
-
-            const rowValueOnly = {
-              [COL.scanAt]: iso(new Date()),
-              [COL.at]:     atTxt,
-              [COL.bt]:     btNum==null? '' : String(btNum),
-              [COL.ct]:     ctIso,
-              [COL.dt]:     dVal || '',
-              [COL.et]:     eVal || '',
-              [COL.result]: result,
-              [COL.reason]: reasons.join(' / ')
-            };
-
-            appendRowLocal(rowValueOnly);
-
-            if (st) st.textContent = recId
-              ? '判定→サーバー保存中…'
-              : '判定→画面に仮保存（新規レコード）';
-
-            ip.value='';
-
-            if (recId) {
-              try {
-                await appendRowServer(appId, recId, rowValueOnly);
-                if(st) st.textContent = result==='OK'
-                  ? 'OKで記録'
-                  : `NGで記録：${reasons.join(' / ')||'不一致'}`;
-              } catch(e) {
-                console.error('[TANA] put error:', e);
-                if(st) st.textContent='ERROR: サーバー保存失敗（画面は仮表示）';
-                alert('サーバー保存に失敗しました。通信状況をご確認ください。');
-              }
-            }
-
-            setTimeout(()=>{ const s=$id('tana-scan-status'); if(s) s.textContent='READY'; }, 1500);
-
-          }catch(e){
-            console.error('[TANA] keydown error:', e);
-            const st=$id('tana-scan-status'); if(st) st.textContent='ERROR: 処理失敗';
-            alert('処理に失敗しました。');
-          }
-        }, true);
-      }
-
-      setTimeout(()=> $id('tana-scan-input')?.focus(), 0);
-
-    }catch(e){ console.error('[TANA] init error:', e); }
-    return event;
-  });
+  );
 })();

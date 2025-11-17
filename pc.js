@@ -1,17 +1,18 @@
-/* TANA-OROSHI pc.js
+/* TANA-OROSHI pc.js (単純区切り型・日付/時間を別型で扱う版)
    - scan_area に SCAN UI を表示（全レコード / 新規・編集両対応）
    - SCAN → サブテーブルに追記（複数理由を reason に出力）
    - 数値：全角/カンマ/負数 対応
    - 編集レコード：サーバーにも即反映＋$revision を更新して GAIA_UN03 防止
    - 新規レコード：画面だけに反映（保存時にまとめて登録）
    - DATEルール(d/dj)、TIMEルール(e/ej)、DATETIME(c/cj)の追加4条件対応
-   - ルール用日付 d → dt（DATE 型）、ルール用時間 e → et（TIME 型）に転記
-   - NEW: QR_CONFIG に基づき「文字 / 数値 / 日時(c) / 日付+時刻(d,e)」をパース
-   v=pc-ng-rules-2025-11-14-3
+   - ルール用日付 d → dt（DATE 型）、ルール用時間 e → et（TIME 型）に転記（値は判定ルールの値）
+   - NEW: 日付(d) と 時刻(e) を最初から別型として扱う
+     QR 配列: [文字列] [数値] [日時(c:日付 時刻)] [日付(d)] [時刻(e)]
+   v=pc-ng-rules-2025-11-14-4
 */
 (function () {
   'use strict';
-  const VERSION = 'pc-ng-rules-2025-11-14-3';
+  const VERSION = 'pc-ng-rules-2025-11-14-4';
   try {
     console.log('[TANA-OROSHI] pc.js loaded:', VERSION);
     window.__TANA_PC_VERSION = VERSION;
@@ -19,14 +20,20 @@
 
   // ==== QR のレイアウト定義（将来的にサービス側で生成する想定） ====
   // 区切り: 半角スペース
-  // フィールド順: 文字列 / 数値 / 日時(c用) / 日付+時刻(d,e用)
+  // フィールド順:
+  //   1) 文字列 (a)
+  //   2) 数値   (b)
+  //   3) 日時   (c: 日付 + 時刻 → 2トークン)
+  //   4) 日付   (d: 1トークン)
+  //   5) 時刻   (e: 1トークン)
   const QR_CONFIG = {
-    delimiter: /\s+/, // ※サービス側で「,」「;」「#」などに変えることを想定
+    delimiter: /\s+/, // ※サービス側で「,」「;」「#」などに変える想定も可能
     slots: [
-      { name: 'a',  type: 'text',     tokens: 1 }, // 1番目: 文字列
-      { name: 'b',  type: 'number',   tokens: 1 }, // 2番目: 数値
-      { name: 'c',  type: 'datetime', tokens: 2 }, // 3番目: 日時 (日付+時刻) → c/ct
-      { name: 'de', type: 'datetime', tokens: 2 }, // 4番目: 日付+時刻 → d/e 判定用
+      { name: 'a', type: 'text',     tokens: 1 }, // 1番目: 文字列
+      { name: 'b', type: 'number',   tokens: 1 }, // 2番目: 数値
+      { name: 'c', type: 'datetime', tokens: 2 }, // 3番目: 日時 (日付+時刻) → c/ct
+      { name: 'd', type: 'date',     tokens: 1 }, // 4番目: 日付 → dルール用
+      { name: 'e', type: 'time',     tokens: 1 }, // 5番目: 時刻 → eルール用
     ]
   };
 
@@ -44,9 +51,9 @@
     scanAt: 'scan_at',
     at:     'at',
     bt:     'bt',
-    ct:     'ct',   // c用の日時
-    dt:     'dt',   // ルール用日付 d を転記
-    et:     'et',   // ルール用時間 e を転記
+    ct:     'ct',   // c用の日時（スキャンから）
+    dt:     'dt',   // ルール用日付 d を転記（d の値）
+    et:     'et',   // ルール用時間 e を転記（e の値）
     result: 'result',
     reason: 'reason'
   };
@@ -145,7 +152,7 @@
     return true;
   };
 
-  // c/cj 用（DATETIME）。追加4条件もここ
+  // c/cj 用（DATETIME）
   const ok_date = (v, label, base) => {
     const sv = v instanceof Date ? v : parseDateLoose(v);
     const bv = base instanceof Date ? base : parseDateLoose(base);
@@ -200,13 +207,13 @@
     return res;
   }
 
-  // e/ej 用（TIME）
-  function checkTimeRule(scanDt, ruleTimeStr, mode) {
+  // e/ej 用（TIME）: 「スキャン側の時間文字列」と「ルール時間文字列」を比較
+  function checkTimeRule(scanTimeStr, ruleTimeStr, mode) {
     const res = { ok: true, reason: '' };
-    if (!scanDt || !ruleTimeStr || !mode) return res;
+    if (!scanTimeStr || !ruleTimeStr || !mode) return res;
 
-    const scanMinutes = timeToMinutes(timeKey(scanDt));
-    const baseMinutes = timeToMinutes(S(ruleTimeStr).trim());
+    const scanMinutes = timeToMinutes(scanTimeStr);
+    const baseMinutes = timeToMinutes(ruleTimeStr);
     if (scanMinutes == null || baseMinutes == null) return res;
 
     switch (mode) {
@@ -226,7 +233,7 @@
         return res;
     }
     if (!res.ok) {
-      res.reason = `e:${mode} (scan:${timeKey(scanDt)}, base:${S(ruleTimeStr).trim()})`;
+      res.reason = `e:${mode} (scan:${scanTimeStr}, base:${S(ruleTimeStr).trim()})`;
     }
     return res;
   }
@@ -275,7 +282,7 @@
     kintone.app.record.set({ record: rec });
   }
 
-  // ---- QR_CONFIG に従って SCAN をパース ----
+  // ---- QR_CONFIG に従って SCAN をパース（a/b/c/d/e 別々に型変換） ----
   function parseScanWithConfig(raw){
     const tokens = S(raw).trim().split(QR_CONFIG.delimiter).filter(Boolean);
     const out = {};
@@ -293,13 +300,13 @@
           out[slot.name] = toNumOrNull(joined);
           break;
         case 'datetime':
-          out[slot.name] = parseDateLoose(joined);
+          out[slot.name] = parseDateLoose(joined); // "YYYY-MM-DD HH:MM"
           break;
         case 'date':
-          out[slot.name] = parseDateLoose(joined);
+          out[slot.name] = parseDateLoose(joined); // 日付だけ
           break;
         case 'time':
-          out[slot.name] = joined;
+          out[slot.name] = joined;                 // "HH:MM" として扱う
           break;
         default:
           out[slot.name] = joined;
@@ -319,7 +326,7 @@
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <strong>SCAN</strong>
         <input id="tana-scan-input" type="text" autocomplete="off"
-               placeholder="(文字) (数値) (日時c:日付 時刻) (日時d/e:日付 時刻) → Enter"
+               placeholder="(文字) (数値) (日時c:日付 時刻) (日付d) (時刻e) → Enter"
                style="flex:1;min-width:320px;padding:6px 8px;border:1px solid #cbd5e1;border-radius:6px;">
         <button id="tana-scan-clear" type="button" style="padding:6px 10px;">クリア</button>
         <span id="tana-scan-status" style="margin-left:8px;color:#64748b;">READY (${placeTag})</span>
@@ -398,8 +405,9 @@
           try{
             const parsed = parseScanWithConfig(ip.value);
 
-            const scanDtForC  = parsed.c || null;
-            const scanDtForDE = parsed.de || parsed.c || null;
+            const scanDtForC = parsed.c || null;         // Date | null
+            const scanDtForD = parsed.d || null;         // Date | null
+            const scanTimeE  = parsed.e || '';           // "HH:MM" | ''
 
             const atTxt = S(parsed.a);
             const btNum = parsed.b;
@@ -421,8 +429,8 @@
             const okB = ok_number(btNum, bOp, bVal);
             const okC = ok_date(scanDtForC, cOp, cVal);
 
-            const dResult = scanDtForDE ? checkDateRule(scanDtForDE, dVal, dOp) : { ok: true, reason: '' };
-            const eResult = scanDtForDE ? checkTimeRule(scanDtForDE, eVal, eOp) : { ok: true, reason: '' };
+            const dResult = scanDtForD ? checkDateRule(scanDtForD, dVal, dOp) : { ok: true, reason: '' };
+            const eResult = scanTimeE  ? checkTimeRule(scanTimeE,  eVal, eOp) : { ok: true, reason: '' };
 
             const reasons=[];
             if(!okA) reasons.push(`a:${aOp||'-'}`);

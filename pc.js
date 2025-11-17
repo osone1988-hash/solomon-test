@@ -1,11 +1,12 @@
 // TANA-OROSHI / 単純区切り型スキャナ（条件2本 + AND/OR、a〜eグループ）
 // ✅ トークン順は CFG.slots に従って解釈（決め打ちしない）
-// ✅ SCANは「slotsの定義」に従ってパース（今は a,b,c(datetime2トークン),d(date),e(time)）
+// ✅ SCANは「slotsの定義」に従ってパース
 // ✅ UIは space: scan_area に固定描画（無ければ最下部フォールバック）
-// ✅ 連結子(as1,bs1,...)が未設定なのに2本目条件があるときは設定エラー扱い（result=ERR）
+// ✅ 連結子(as1,bs1,...)未設定 + 2本目条件あり → 設定エラー（ERR）
+// ✅ 2本目の値(a2,b2,...)だけ入っていて条件(aj2,bj2,...)が未選択 → 設定エラー（ERR）
 //
 // version:
-window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-24';
+window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-25';
 
 (function () {
   'use strict';
@@ -226,60 +227,124 @@ window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-24';
     return { isError: false, join, message: null };
   }
 
+  // 2本目: 「値はあるのに条件が空」のチェック
+  function checkSecondFieldConfig(base2, op2, label) {
+    const hasValue = String(base2 ?? '').trim() !== '';
+    const hasOp = !!op2 && op2 !== '指定なし';
+    if (hasValue && !hasOp) {
+      return {
+        isError: true,
+        message: `設定エラー: ${label} の条件を選択してください`,
+      };
+    }
+    return { isError: false, message: null };
+  }
+
   // ===== グループ（a〜e）評価 =====
   const RF = CFG.ruleFields;
 
   function evalGroupA(rec, parsed) {
+    const base2 = val(rec, RF.a2);
+    const op2   = val(rec, RF.aj2);
+
+    // 2本目の値だけ入っていて op が空 → 設定エラー
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'a2(aj2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
+
     const c1 = judgeText(parsed.aText, val(rec, RF.a),  val(rec, RF.aj),  'a1');
-    const c2 = judgeText(parsed.aText, val(rec, RF.a2), val(rec, RF.aj2), 'a2');
+    const c2 = judgeText(parsed.aText, base2, op2, 'a2');
+
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.as1), c2, 'a(as1)');
     if (joinCheck.isError) {
       return { ok: false, reasons: [joinCheck.message], configError: true };
     }
+
     const comb = combineConds([c1, c2], joinCheck.join);
     return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupB(rec, parsed) {
+    const base2 = val(rec, RF.b2);
+    const op2   = val(rec, RF.bj2);
+
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'b2(bj2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
+
     const c1 = judgeNumber(parsed.bNumber, val(rec, RF.b),  val(rec, RF.bj),  'b1');
-    const c2 = judgeNumber(parsed.bNumber, val(rec, RF.b2), val(rec, RF.bj2), 'b2');
+    const c2 = judgeNumber(parsed.bNumber, base2, op2, 'b2');
+
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.bs1), c2, 'b(bs1)');
     if (joinCheck.isError) {
       return { ok: false, reasons: [joinCheck.message], configError: true };
     }
+
     const comb = combineConds([c1, c2], joinCheck.join);
     return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupC(rec, parsed) {
+    const base2 = val(rec, RF.c2);
+    const op2   = val(rec, RF.cj2);
+
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'c2(cj2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
+
     const c1 = judgeDateTime(parsed.cDateTimeIso, val(rec, RF.c),  val(rec, RF.cj),  'c1');
-    const c2 = judgeDateTime(parsed.cDateTimeIso, val(rec, RF.c2), val(rec, RF.cj2), 'c2');
+    const c2 = judgeDateTime(parsed.cDateTimeIso, base2, op2, 'c2');
+
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.cs1), c2, 'c(cs1)');
     if (joinCheck.isError) {
       return { ok: false, reasons: [joinCheck.message], configError: true };
     }
+
     const comb = combineConds([c1, c2], joinCheck.join);
     return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupD(rec, parsed) {
+    const base2 = val(rec, RF.d2);
+    const op2   = val(rec, RF.dj2);
+
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'd2(dj2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
+
     const c1 = judgeDate(parsed.dDateStr, val(rec, RF.d),  val(rec, RF.dj),  'd1');
-    const c2 = judgeDate(parsed.dDateStr, val(rec, RF.d2), val(rec, RF.dj2), 'd2');
+    const c2 = judgeDate(parsed.dDateStr, base2, op2, 'd2');
+
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.ds1), c2, 'd(ds1)');
     if (joinCheck.isError) {
       return { ok: false, reasons: [joinCheck.message], configError: true };
     }
+
     const comb = combineConds([c1, c2], joinCheck.join);
     return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupE(rec, parsed) {
+    const base2 = val(rec, RF.e2);
+    const op2   = val(rec, RF.ej2);
+
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'e2(ej2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
+
     const c1 = judgeTime(parsed.eMinutes, val(rec, RF.e),  val(rec, RF.ej),  'e1');
-    const c2 = judgeTime(parsed.eMinutes, val(rec, RF.e2), val(rec, RF.ej2), 'e2');
+    const c2 = judgeTime(parsed.eMinutes, base2, op2, 'e2');
+
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.es1), c2, 'e(es1)');
     if (joinCheck.isError) {
       return { ok: false, reasons: [joinCheck.message], configError: true };
     }
+
     const comb = combineConds([c1, c2], joinCheck.join);
     return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }

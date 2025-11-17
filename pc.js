@@ -1,8 +1,9 @@
 // TANA-OROSHI / 単純区切り型スキャナ（条件2本 + AND/OR、a〜eグループ）
 // SCANは [文字 数値 日時DATE 日時TIME DATE TIME] の6トークン
 // UIは space: scan_area に固定描画（無ければ最下部フォールバック）
+// 連結子(as1,bs1,...)が未設定なのに2本目条件があるときは設定エラー扱い（result=ERR）
 // version:
-window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-22';
+window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-23';
 
 (function () {
   'use strict';
@@ -85,11 +86,6 @@ window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-22';
     return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   }
   function sameHM(a, b) { return a.getHours() === b.getHours() && a.getMinutes() === b.getMinutes(); }
-
-  function normalizeJoin(s) {
-    const t = String(s || '').trim().toLowerCase();
-    return t === 'or' ? 'or' : 'and';
-  }
 
   // ===== 判定関数（単一条件 → {specified, ok, reason}） =====
   function judgeText(scan, base, op, label) {
@@ -204,55 +200,111 @@ window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-22';
     return { ok, reasons };
   }
 
+  // joinRaw & cond2から、連結子 or 設定エラーを判定
+  function resolveJoinOrConfigError(joinRaw, cond2, label) {
+    const hasSecond = cond2.specified;
+    const t = String(joinRaw || '').trim().toLowerCase();
+
+    if (hasSecond && t !== 'and' && t !== 'or') {
+      return {
+        isError: true,
+        join: 'and', // ダミー
+        message: `設定エラー: ${label} の連結条件を選択してください`,
+      };
+    }
+    const join = (t === 'or') ? 'or' : 'and'; // 未指定 or 変な値 + cond2未使用 → and
+    return { isError: false, join, message: null };
+  }
+
   // ===== グループ（a〜e）評価 =====
   function evalGroupA(rec, parsed) {
     const rf = CFG.ruleFields;
-    const join = normalizeJoin(val(rec, rf.as1));
     const c1 = judgeText(parsed.aText, val(rec, rf.a),  val(rec, rf.aj),  'a1');
     const c2 = judgeText(parsed.aText, val(rec, rf.a2), val(rec, rf.aj2), 'a2');
-    return combineConds([c1, c2], join);
+    const joinCheck = resolveJoinOrConfigError(val(rec, rf.as1), c2, 'a(as1)');
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
+    const comb = combineConds([c1, c2], joinCheck.join);
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupB(rec, parsed) {
     const rf = CFG.ruleFields;
-    const join = normalizeJoin(val(rec, rf.bs1));
     const c1 = judgeNumber(parsed.bNumber, val(rec, rf.b),  val(rec, rf.bj),  'b1');
     const c2 = judgeNumber(parsed.bNumber, val(rec, rf.b2), val(rec, rf.bj2), 'b2');
-    return combineConds([c1, c2], join);
+    const joinCheck = resolveJoinOrConfigError(val(rec, rf.bs1), c2, 'b(bs1)');
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
+    const comb = combineConds([c1, c2], joinCheck.join);
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupC(rec, parsed) {
     const rf = CFG.ruleFields;
-    const join = normalizeJoin(val(rec, rf.cs1));
     const c1 = judgeDateTime(parsed.cDateTimeIso, val(rec, rf.c),  val(rec, rf.cj),  'c1');
     const c2 = judgeDateTime(parsed.cDateTimeIso, val(rec, rf.c2), val(rec, rf.cj2), 'c2');
-    return combineConds([c1, c2], join);
+    const joinCheck = resolveJoinOrConfigError(val(rec, rf.cs1), c2, 'c(cs1)');
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
+    const comb = combineConds([c1, c2], joinCheck.join);
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupD(rec, parsed) {
     const rf = CFG.ruleFields;
-    const join = normalizeJoin(val(rec, rf.ds1));
     const c1 = judgeDate(parsed.dDateStr, val(rec, rf.d),  val(rec, rf.dj),  'd1');
     const c2 = judgeDate(parsed.dDateStr, val(rec, rf.d2), val(rec, rf.dj2), 'd2');
-    return combineConds([c1, c2], join);
+    const joinCheck = resolveJoinOrConfigError(val(rec, rf.ds1), c2, 'd(ds1)');
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
+    const comb = combineConds([c1, c2], joinCheck.join);
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupE(rec, parsed) {
     const rf = CFG.ruleFields;
-    const join = normalizeJoin(val(rec, rf.es1));
     const c1 = judgeTime(parsed.eMinutes, val(rec, rf.e),  val(rec, rf.ej),  'e1');
     const c2 = judgeTime(parsed.eMinutes, val(rec, rf.e2), val(rec, rf.ej2), 'e2');
-    return combineConds([c1, c2], join);
+    const joinCheck = resolveJoinOrConfigError(val(rec, rf.es1), c2, 'e(es1)');
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
+    const comb = combineConds([c1, c2], joinCheck.join);
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evaluateAll(rec, parsed) {
     const reasons = [];
-    const ga = evalGroupA(rec, parsed); if (!ga.ok) reasons.push(...ga.reasons);
-    const gb = evalGroupB(rec, parsed); if (!gb.ok) reasons.push(...gb.reasons);
-    const gc = evalGroupC(rec, parsed); if (!gc.ok) reasons.push(...gc.reasons);
-    const gd = evalGroupD(rec, parsed); if (!gd.ok) reasons.push(...gd.reasons);
-    const ge = evalGroupE(rec, parsed); if (!ge.ok) reasons.push(...ge.reasons);
-    return { ok: reasons.length === 0, reasons };
+    let configError = false;
+
+    const ga = evalGroupA(rec, parsed);
+    if (!ga.ok) reasons.push(...ga.reasons);
+    if (ga.configError) configError = true;
+
+    const gb = evalGroupB(rec, parsed);
+    if (!gb.ok) reasons.push(...gb.reasons);
+    if (gb.configError) configError = true;
+
+    const gc = evalGroupC(rec, parsed);
+    if (!gc.ok) reasons.push(...gc.reasons);
+    if (gc.configError) configError = true;
+
+    const gd = evalGroupD(rec, parsed);
+    if (!gd.ok) reasons.push(...gd.reasons);
+    if (gd.configError) configError = true;
+
+    const ge = evalGroupE(rec, parsed);
+    if (!ge.ok) reasons.push(...ge.reasons);
+    if (ge.configError) configError = true;
+
+    if (configError) {
+      return { ok: false, reasons, configError: true };
+    }
+    return { ok: reasons.length === 0, reasons, configError: false };
   }
 
   // ===== SCAN パース（6トークン） =====
@@ -308,7 +360,9 @@ window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-22';
     row.value[tf.c]      = { type: 'DATETIME', value: parsed.cDateTimeIso };
     row.value[tf.d]      = { type: 'DATE', value: parsed.dDateStr };
     row.value[tf.e]      = { type: 'TIME', value: parsed.eTimeStr };
-    row.value[tf.result] = { type: 'SINGLE_LINE_TEXT', value: evalRes.ok ? 'OK' : 'NG' };
+
+    const resultStr = evalRes.configError ? 'ERR' : (evalRes.ok ? 'OK' : 'NG');
+    row.value[tf.result] = { type: 'SINGLE_LINE_TEXT', value: resultStr };
     row.value[tf.reason] = { type: 'MULTI_LINE_TEXT', value: evalRes.reasons.join(' / ') };
 
     table.value.push(row);
@@ -346,7 +400,7 @@ window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-22';
 
     const status = document.createElement('span');
     status.textContent = 'READY';
-    status.style.minWidth = '64px';
+    status.style.minWidth = '80px';
     row1.appendChild(status);
 
     const row2 = document.createElement('div');
@@ -383,7 +437,12 @@ window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-22';
       appendRow(appRec, parsed, evalRes);
       kintone.app.record.set(appRec);
 
-      status.textContent = evalRes.ok ? 'OK' : 'NG';
+      if (evalRes.configError) {
+        status.textContent = 'ERR (設定エラー)';
+      } else {
+        status.textContent = evalRes.ok ? 'OK' : 'NG';
+      }
+
       input.value = '';
       input.focus();
     });

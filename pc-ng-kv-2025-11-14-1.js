@@ -1,29 +1,33 @@
 // TANA-OROSHI / キー型スキャナ（トークン別に前後文字を指定して抽出）
 //  - 例: "a=TEST; b=10; c=2025-11-14 00:00; d=2025-11-14; e=00:00;"
-//  - 各トークン（a,b,c,d,e）ごとに {before, after, type} を設定（大小文字は無視）
-//  - 単純区切り型の judge / evaluate / ERR判定ロジックは踏襲
-//  - 仕様（本サンプルの反映点）:
-//     * キー大小文字: 無視
-//     * 未知キー: 無視（将来 warn/err に拡張可）
-//     * キー重複: ERR（"aの読み取り結果が不正です" などを reason に出力）
-//     * 必須キー: a,b,c,d,e は原則必須。ただし欠落しても判定は継続し、
-//                 reason に「読み取れない、文字列があります」を記録（ERRにはしない）
-//     * DATETIME と DATE/TIME の優先順位: なし（指定type通りに扱う／合成しない）
-//     * TZ: JST(+09:00)固定
+//  - 仕様（抜粋）:
+//     * before/after で各トークン(a〜e)のVALUEを抽出（大小文字は無視可）
+//     * 未知キー: 今は無視（将来 warn/err へ拡張可）
+//     * 重複キー: ERR（例: "a" が2回出現）
+//     * 必須欠落: 判定は続行、Reasonに注意文（"読み取れない、文字列があります"）
+//     * 「条件あり＆スキャン欠落」: CFG.missingScanWithCondPolicy で 'ignore' or 'error' を選択
+//     * DATETIME/DATE/TIME は指定typeどおりに厳密扱い（合成なし）
+//     * TZ: JST(+09:00)
 //
 // version:
-window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
+window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
 
 (function () {
   'use strict';
 
   // ===== 設定 =====
   const CFG = {
-    spaceId: 'scan_area',               // SCAN UI の設置スペース（kintoneのスペースコード）
+    // SCAN入力UIを置く kintone スペースコード
+    spaceId: 'scan_area',
 
-    // トークン定義: { target:'a'|'b'|'c'|'d'|'e', label:'a'など, type:'text'|'number'|'datetime'|'date'|'time',
-    //                before:'a=', after:';' } の形で設定
-    // ★サービスの管理画面からこの配列を生成／差し替えする想定★
+    // ★★ 条件あり＆スキャン欠落の挙動を選択 ★★
+    //  'ignore' = 判定は続行（ResultはOK/NGのまま）。Reasonに注意文を出す。
+    //  'error'  = ERR（設定エラー扱い）。Reasonに注意文を出す。
+    missingScanWithCondPolicy: 'ignore',
+    missingScanWithCondNote: '条件指定されていますが、読み取れません',
+
+    // トークン定義: 各トークンの before/after と型
+    // （※サービス管理画面から出力する想定）
     tokenDefs: [
       { target: 'a', label: 'a', type: 'text',     before: 'a=', after: ';' },
       { target: 'b', label: 'b', type: 'number',   before: 'b=', after: ';' },
@@ -32,32 +36,27 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
       { target: 'e', label: 'e', type: 'time',     before: 'e=', after: ';' },
     ],
 
-    caseInsensitiveTokens: true,        // before/after のマッチは大小文字を無視
-    duplicatePolicy: 'error',           // 'error' 固定（重複はERR）
-    missingKeyNote: '読み取れない、文字列があります', // 欠落時にreasonへ記録する文言（ERRにはしない）
+    caseInsensitiveTokens: true,        // before/after のマッチで大小文字を無視
+    duplicatePolicy: 'error',           // 同一トークン複数ヒットは ERR
+    missingKeyNote: '読み取れない、文字列があります', // 必須欠落時の注意メッセージ
 
     // JST固定
     timezoneOffset: '+09:00',
 
-    // 受け付ける日時/日付/時刻のフォーマット（最低限）
-    // DATETIME: "YYYY-MM-DD HH:mm" or "YYYY-MM-DDTHH:mm"
-    // DATE:     "YYYY-MM-DD"
-    // TIME:     "HH:mm"
-    // （必要に応じて正規表現を追加可能）
-    // ---- サブテーブル・判定用フィールド ----
+    // サブテーブル
     tableCode: 'scan_table',
     tableFields: {
-      scanAt: 'scan_at',                // DATETIME: スキャン時刻
+      scanAt: 'scan_at',                // DATETIME（スキャン記録時刻）
       a: 'at',                          // TEXT
       b: 'bt',                          // NUMBER
       c: 'ct',                          // DATETIME
       d: 'dt',                          // DATE
       e: 'et',                          // TIME
-      result: 'result',                 // TEXT (OK/NG/ERR)
+      result: 'result',                 // TEXT（OK/NG/ERR）
       reason: 'reason',                 // MULTI_LINE_TEXT
     },
 
-    // 判定条件フィールド（単純区切り版を踏襲）
+    // ルール用フィールド（条件×2 + 連結子）
     ruleFields: {
       a: 'a',   aj: 'aj',   a2: 'a2', aj2: 'aj2', as1: 'as1',
       b: 'b',   bj: 'bj',   b2: 'b2', bj2: 'bj2', bs1: 'bs1',
@@ -66,12 +65,13 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
       e: 'e',   ej: 'ej',   e2: 'e2', ej2: 'ej2', es1: 'es1',
     },
 
-    // すべて必須（ただし欠落はERRではなく注意書きのみにするため、評価は継続）
+    // すべて必須（ただし欠落は ERR にはせず、注意Reasonに記録）
     requiredTargets: ['a','b','c','d','e'],
   };
 
   // ===== 小ユーティリティ =====
   const val = (rec, code) => (rec[code] ? rec[code].value : '');
+  const nz  = (s) => String(s ?? '').trim() !== '';
 
   function nowIso() { return new Date().toISOString(); }
 
@@ -118,7 +118,7 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     return null;
   }
 
-  // ===== 判定関数（「スキャン値が欠落」の場合は判定から除外 = OK扱い） =====
+  // ===== 判定関数 =====
   function judgeText(scan, base, op, label) {
     const specified = !!op && op !== '指定なし';
     if (!specified || base == null || base === '' || scan == null || scan === '') {
@@ -145,7 +145,7 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
       return { specified, ok: true, reason: null };
     }
     const s = Number(scanNum), b = Number(baseNum);
-    if (Number.isNaN(s)) return { specified, ok: true, reason: null }; // 欠落相当としてスキップ
+    if (Number.isNaN(s)) return { specified, ok: true, reason: null };
     let ok = true;
     switch (op) {
       case '同じ': ok = (s === b); break;
@@ -231,13 +231,27 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     return { isError: false, join, message: null };
   }
 
+  // 2本目: 「値はあるのに条件が未選択」→ ERR
   function checkSecondFieldConfig(base2, op2, label) {
-    const hasValue = String(base2 ?? '').trim() !== '';
+    const hasValue = nz(base2);
     const hasOp = !!op2 && op2 !== '指定なし';
     if (hasValue && !hasOp) {
       return { isError: true, message: `設定エラー: ${label} の条件を選択してください` };
     }
     return { isError: false, message: null };
+  }
+
+  // ===== 「条件あり＆スキャン欠落」の共通チェック =====
+  function applyMissingScanPolicy({ scanMissing, condSpecified, label, baseReasons }) {
+    if (!condSpecified || !scanMissing) {
+      return { reasons: baseReasons, configError: false, overrideOk: null };
+    }
+    const msg = `${label}: ${CFG.missingScanWithCondNote}`;
+    if (CFG.missingScanWithCondPolicy === 'error') {
+      return { reasons: [...baseReasons, msg], configError: true, overrideOk: false };
+    }
+    // ignore: 判定はそのまま（理由だけ追記）
+    return { reasons: [...baseReasons, msg], configError: false, overrideOk: null };
   }
 
   // ===== グループ評価 =====
@@ -246,8 +260,9 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
   function evalGroupA(rec, parsed) {
     const base2 = val(rec, RF.a2);
     const op2   = val(rec, RF.aj2);
-    const secondCheck = checkSecondFieldConfig(base2, op2, 'a2(aj2)');
-    if (secondCheck.isError) return { ok: false, reasons: [secondCheck.message], configError: true };
+
+    const second = checkSecondFieldConfig(base2, op2, 'a2(aj2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
 
     const c1 = judgeText(parsed.aText, val(rec, RF.a),  val(rec, RF.aj),  'a1');
     const c2 = judgeText(parsed.aText, base2, op2, 'a2');
@@ -256,14 +271,21 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
 
     const comb = combineConds([c1, c2], joinCheck.join);
-    return { ok: comb.ok, reasons: comb.reasons, configError: false };
+
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = !(parsed.aText != null && parsed.aText !== '');
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'a', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
   }
 
   function evalGroupB(rec, parsed) {
     const base2 = val(rec, RF.b2);
     const op2   = val(rec, RF.bj2);
-    const secondCheck = checkSecondFieldConfig(base2, op2, 'b2(bj2)');
-    if (secondCheck.isError) return { ok: false, reasons: [secondCheck.message], configError: true };
+
+    const second = checkSecondFieldConfig(base2, op2, 'b2(bj2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
 
     const c1 = judgeNumber(parsed.bNumber, val(rec, RF.b),  val(rec, RF.bj),  'b1');
     const c2 = judgeNumber(parsed.bNumber, base2, op2, 'b2');
@@ -272,14 +294,21 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
 
     const comb = combineConds([c1, c2], joinCheck.join);
-    return { ok: comb.ok, reasons: comb.reasons, configError: false };
+
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = (parsed.bNumber == null);
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'b', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
   }
 
   function evalGroupC(rec, parsed) {
     const base2 = val(rec, RF.c2);
     const op2   = val(rec, RF.cj2);
-    const secondCheck = checkSecondFieldConfig(base2, op2, 'c2(cj2)');
-    if (secondCheck.isError) return { ok: false, reasons: [secondCheck.message], configError: true };
+
+    const second = checkSecondFieldConfig(base2, op2, 'c2(cj2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
 
     const c1 = judgeDateTime(parsed.cDateTimeIso, val(rec, RF.c),  val(rec, RF.cj),  'c1');
     const c2 = judgeDateTime(parsed.cDateTimeIso, base2, op2, 'c2');
@@ -288,14 +317,21 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
 
     const comb = combineConds([c1, c2], joinCheck.join);
-    return { ok: comb.ok, reasons: comb.reasons, configError: false };
+
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = !parsed.cDateTimeIso;
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'c', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
   }
 
   function evalGroupD(rec, parsed) {
     const base2 = val(rec, RF.d2);
     const op2   = val(rec, RF.dj2);
-    const secondCheck = checkSecondFieldConfig(base2, op2, 'd2(dj2)');
-    if (secondCheck.isError) return { ok: false, reasons: [secondCheck.message], configError: true };
+
+    const second = checkSecondFieldConfig(base2, op2, 'd2(dj2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
 
     const c1 = judgeDate(parsed.dDateStr, val(rec, RF.d),  val(rec, RF.dj),  'd1');
     const c2 = judgeDate(parsed.dDateStr, base2, op2, 'd2');
@@ -304,14 +340,21 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
 
     const comb = combineConds([c1, c2], joinCheck.join);
-    return { ok: comb.ok, reasons: comb.reasons, configError: false };
+
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = !parsed.dDateStr;
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'd', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
   }
 
   function evalGroupE(rec, parsed) {
     const base2 = val(rec, RF.e2);
     const op2   = val(rec, RF.ej2);
-    const secondCheck = checkSecondFieldConfig(base2, op2, 'e2(ej2)');
-    if (secondCheck.isError) return { ok: false, reasons: [secondCheck.message], configError: true };
+
+    const second = checkSecondFieldConfig(base2, op2, 'e2(ej2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
 
     const c1 = judgeTime(parsed.eMinutes, val(rec, RF.e),  val(rec, RF.ej),  'e1');
     const c2 = judgeTime(parsed.eMinutes, base2, op2, 'e2');
@@ -320,23 +363,31 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
 
     const comb = combineConds([c1, c2], joinCheck.join);
-    return { ok: comb.ok, reasons: comb.reasons, configError: false };
+
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = !(parsed.eTimeStr);
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'e', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
   }
 
   function evaluateAll(rec, parsed) {
     const reasons = [];
     let configError = false;
+    let okAll = true;
 
-    const ga = evalGroupA(rec, parsed); if (!ga.ok) reasons.push(...ga.reasons); if (ga.configError) configError = true;
-    const gb = evalGroupB(rec, parsed); if (!gb.ok) reasons.push(...gb.reasons); if (gb.configError) configError = true;
-    const gc = evalGroupC(rec, parsed); if (!gc.ok) reasons.push(...gc.reasons); if (gc.configError) configError = true;
-    const gd = evalGroupD(rec, parsed); if (!gd.ok) reasons.push(...gd.reasons); if (gd.configError) configError = true;
-    const ge = evalGroupE(rec, parsed); if (!ge.ok) reasons.push(...ge.reasons); if (ge.configError) configError = true;
+    const groups = [evalGroupA(rec, parsed), evalGroupB(rec, parsed), evalGroupC(rec, parsed), evalGroupD(rec, parsed), evalGroupE(rec, parsed)];
+    for (const g of groups) {
+      if (!g.ok) okAll = false;
+      if (g.configError) configError = true;
+      if (g.reasons && g.reasons.length) reasons.push(...g.reasons);
+    }
 
-    return { ok: reasons.length === 0, reasons, configError };
+    return { ok: !configError && okAll, reasons, configError };
   }
 
-  // ===== 文字列からトークン抽出（各トークンの before/after で非貪欲に抽出） =====
+  // ===== 文字列 → トークン抽出 =====
   function collectTokenValues(text, before, after, caseInsensitive) {
     const b = escapeRegExp(before);
     const a = escapeRegExp(after);
@@ -350,16 +401,14 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     return found;
   }
 
-  // ===== SCAN パース（重複はERR、欠落は注意メモとしてreasonへ） =====
+  // ===== SCAN パース（重複はERR、欠落は注意） =====
   function parseScan(raw) {
     const text = String(raw || '').trim();
     if (!text) return { parsed: null, parseErr: 'SCAN が空です' };
 
     const parsed = {
       aText: null, bNumber: null, cDateTimeIso: null, dDateStr: null, eTimeStr: null, eMinutes: null,
-      raw: text,
-      reasons: [],       // 注意や重複等のメッセージ
-      configError: false // 重複や値形式不正などは ERR 扱いにする
+      raw: text, reasons: [], configError: false
     };
 
     const missingTargets = [];
@@ -368,15 +417,12 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
       const hits = collectTokenValues(text, tok.before, tok.after, CFG.caseInsensitiveTokens);
 
       if (hits.length === 0) {
-        if (CFG.requiredTargets.includes(tok.target)) {
-          missingTargets.push(tok.label || tok.target);
-        }
+        if (CFG.requiredTargets.includes(tok.target)) missingTargets.push(tok.label || tok.target);
         continue;
       }
       if (hits.length > 1 && CFG.duplicatePolicy === 'error') {
         parsed.configError = true;
         parsed.reasons.push(`${tok.label || tok.target}の読み取り結果が不正です（重複）`);
-        // 重複時は評価値をセットしない（nullのまま）
         continue;
       }
 
@@ -417,8 +463,7 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
             break;
           }
           default:
-            // 将来拡張用: type未対応は無視
-            break;
+            break; // 将来拡張: 未対応typeは無視
         }
       } catch (err) {
         parsed.configError = true;
@@ -426,7 +471,7 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
       }
     }
 
-    // 欠落があれば注意書きを reason に追記（ERRにはしない）
+    // 必須欠落 → 判定は続行、Reasonだけ追記
     if (missingTargets.length > 0) {
       parsed.reasons.push(CFG.missingKeyNote);
     }
@@ -434,7 +479,7 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     return { parsed, parseErr: null };
   }
 
-  // ===== サブテーブル追記（parse/eval の両結果をマージして記録） =====
+  // ===== サブテーブル追記 =====
   function appendRow(appRec, parsed, evalRes) {
     const rec = appRec.record;
     const tf = CFG.tableFields;
@@ -442,7 +487,7 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
     const table = rec[CFG.tableCode];
 
     const combinedConfigError = evalRes.configError || parsed.configError;
-    const reasonsText = [...(evalRes.reasons || []), ...(parsed.reasons || [])].join(' / ');
+    const reasonsText = [...(evalRes.reasons || []), ...(parsed.reasons || [])].filter(Boolean).join(' / ');
 
     const row = { value: {} };
     row.value[tf.scanAt] = { type: 'DATETIME', value: nowIso() };
@@ -463,15 +508,10 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
   function buildScanUI() {
     const space = kintone.app.record.getSpaceElement(CFG.spaceId);
     let mount = space;
-    if (!mount) {
-      mount = document.createElement('div');
-      mount.id = 'tana-scan-fallback';
-      document.body.appendChild(mount);
-    }
+    if (!mount) { mount = document.createElement('div'); mount.id = 'tana-scan-fallback'; document.body.appendChild(mount); }
     while (mount.firstChild) mount.removeChild(mount.firstChild);
 
-    const wrap = document.createElement('div');
-    wrap.style.margin = '8px 0';
+    const wrap = document.createElement('div'); wrap.style.margin = '8px 0';
 
     const row1 = document.createElement('div');
     row1.style.display = 'flex';
@@ -515,25 +555,16 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-01';
 
       const appRec = kintone.app.record.get();
 
-      // 1) 解析
       const { parsed, parseErr } = parseScan(input.value);
-      if (parseErr) {
-        status.textContent = `NG: ${parseErr}`;
-        return;
-      }
+      if (parseErr) { status.textContent = `NG: ${parseErr}`; return; }
 
-      // 2) 評価
       const evalRes = evaluateAll(appRec.record, parsed);
-
-      // 3) 転記
       appendRow(appRec, parsed, evalRes);
       kintone.app.record.set(appRec);
 
-      // 4) ステータス
       const combinedConfigError = evalRes.configError || parsed.configError;
-      status.textContent = combinedConfigError ? 'ERR (読み取り)' : (evalRes.ok ? 'OK' : 'NG');
+      status.textContent = combinedConfigError ? 'ERR (読み取り/設定)' : (evalRes.ok ? 'OK' : 'NG');
 
-      // 5) クリア
       input.value = '';
       input.focus();
     });

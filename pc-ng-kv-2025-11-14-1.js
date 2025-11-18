@@ -8,9 +8,11 @@
 //     * 「条件あり＆スキャン欠落」: CFG.missingScanWithCondPolicy で 'ignore' or 'error' を選択
 //     * DATETIME/DATE/TIME は指定typeどおりに厳密扱い（合成なし）
 //     * TZ: JST(+09:00)
+//     * 直近SCANの生データと理由をUIに表示
+//     * サブテーブルの「空行」は自動的に削除して表示しない
 //
 // version:
-window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
+window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-05';
 
 (function () {
   'use strict';
@@ -26,8 +28,7 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
     missingScanWithCondPolicy: 'ignore',
     missingScanWithCondNote: '条件指定されていますが、読み取れません',
 
-    // トークン定義: 各トークンの before/after と型
-    // （※サービス管理画面から出力する想定）
+    // トークン定義: 各トークンの before/after と型（サービス管理画面から出力する想定）
     tokenDefs: [
       { target: 'a', label: 'a', type: 'text',     before: 'a=', after: ';' },
       { target: 'b', label: 'b', type: 'number',   before: 'b=', after: ';' },
@@ -67,6 +68,13 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
 
     // すべて必須（ただし欠落は ERR にはせず、注意Reasonに記録）
     requiredTargets: ['a','b','c','d','e'],
+
+    // UIオプション
+    ui: {
+      showLastScanUnderInput: true,     // 入力欄の下に「直近SCAN生データ」を表示
+      showReasonsUnderStatus: true,     // ステータスの下に「理由」も表示
+      exampleText: '例: a=TEST; b=10; c=2025-11-14 00:00; d=2025-11-14; e=00:00; → Enter'
+    }
   };
 
   // ===== 小ユーティリティ =====
@@ -479,12 +487,34 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
     return { parsed, parseErr: null };
   }
 
-  // ===== サブテーブル追記 =====
+  // ===== サブテーブル空行判定・除去 =====
+  function isSubtableRowEmpty(row) {
+    if (!row || !row.value) return true;
+    const tf = CFG.tableFields;
+    const codes = [tf.scanAt, tf.a, tf.b, tf.c, tf.d, tf.e, tf.result, tf.reason];
+    for (const code of codes) {
+      const cell = row.value[code];
+      const v = cell ? cell.value : '';
+      if (v != null && String(v).trim() !== '') return false;
+    }
+    return true;
+  }
+
+  function pruneEmptyRowsInEvent(event) {
+    const tbl = event.record[CFG.tableCode];
+    if (!tbl || !Array.isArray(tbl.value)) return;
+    tbl.value = tbl.value.filter(r => !isSubtableRowEmpty(r));
+  }
+
+  // ===== サブテーブル追記（空行は都度除去） =====
   function appendRow(appRec, parsed, evalRes) {
     const rec = appRec.record;
     const tf = CFG.tableFields;
     if (!rec[CFG.tableCode]) rec[CFG.tableCode] = { type: 'SUBTABLE', value: [] };
     const table = rec[CFG.tableCode];
+
+    // まず既存の空行を除去
+    table.value = (table.value || []).filter(r => !isSubtableRowEmpty(r));
 
     const combinedConfigError = evalRes.configError || parsed.configError;
     const reasonsText = [...(evalRes.reasons || []), ...(parsed.reasons || [])].filter(Boolean).join(' / ');
@@ -504,7 +534,7 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
     table.value.push(row);
   }
 
-  // ===== UI（scan_area に設置） =====
+  // ===== UI（scan_area に設置 / 直近SCANと理由の表示つき） =====
   function buildScanUI() {
     const space = kintone.app.record.getSpaceElement(CFG.spaceId);
     let mount = space;
@@ -537,15 +567,26 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
     row2.style.marginTop = '4px';
     row2.style.fontSize = '12px';
     row2.style.color = '#666';
-    row2.textContent = '例: a=TEST; b=10; c=2025-11-14 00:00; d=2025-11-14; e=00:00; → Enter';
+    row2.textContent = CFG.ui.exampleText;
+
+    const row3 = document.createElement('div');
+    row3.style.marginTop = '2px';
+    row3.style.fontSize = '12px';
+    row3.style.color = '#a33';
+    row3.style.whiteSpace = 'pre-wrap';
+    row3.style.display = CFG.ui.showReasonsUnderStatus ? '' : 'none';
+    row3.textContent = '';
 
     wrap.appendChild(row1);
     wrap.appendChild(row2);
+    if (CFG.ui.showReasonsUnderStatus) wrap.appendChild(row3);
     mount.appendChild(wrap);
 
     clearBtn.addEventListener('click', () => {
       input.value = '';
       status.textContent = 'READY';
+      row2.textContent = CFG.ui.exampleText;
+      row3.textContent = '';
       input.focus();
     });
 
@@ -555,16 +596,35 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
 
       const appRec = kintone.app.record.get();
 
+      // 1) 解析
       const { parsed, parseErr } = parseScan(input.value);
-      if (parseErr) { status.textContent = `NG: ${parseErr}`; return; }
+      if (parseErr) {
+        status.textContent = `NG: ${parseErr}`;
+        if (CFG.ui.showLastScanUnderInput) row2.textContent = `最終SCAN: ${String(input.value || '').trim()}`;
+        row3.textContent = '';
+        return;
+      }
 
+      // 2) 評価
       const evalRes = evaluateAll(appRec.record, parsed);
+
+      // 3) 転記（空行はここで除去される）
       appendRow(appRec, parsed, evalRes);
       kintone.app.record.set(appRec);
 
+      // 4) ステータス＋直近SCAN＋理由
       const combinedConfigError = evalRes.configError || parsed.configError;
       status.textContent = combinedConfigError ? 'ERR (読み取り/設定)' : (evalRes.ok ? 'OK' : 'NG');
 
+      if (CFG.ui.showLastScanUnderInput) {
+        row2.textContent = `最終SCAN: ${parsed.raw}`;
+      }
+      if (CFG.ui.showReasonsUnderStatus) {
+        const reasonsText = [...(evalRes.reasons || []), ...(parsed.reasons || [])].filter(Boolean).join(' / ');
+        row3.textContent = reasonsText ? `理由: ${reasonsText}` : '';
+      }
+
+      // 5) クリア
       input.value = '';
       input.focus();
     });
@@ -572,6 +632,10 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-03';
 
   // ===== イベント =====
   kintone.events.on(['app.record.create.show', 'app.record.edit.show'], (event) => {
+    // 表示直前でサブテーブルの空行を除去（最上段の空白行を出さない）
+    if (event && event.record && event.record[CFG.tableCode]) {
+      pruneEmptyRowsInEvent(event);
+    }
     buildScanUI();
     return event;
   });

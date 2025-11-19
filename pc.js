@@ -1,113 +1,87 @@
-// TANA-OROSHI / キー型スキャナ（トークン別に前後文字を指定して抽出）
-//  - 例: "a=TEST; b=10; c=2025-11-14 00:00; d=2025-11-14; e=00:00;"
-//  - 主な仕様:
-//     * before/after で各トークン(a〜e)のVALUEを抽出（大小文字は無視可）
-//     * 未知キー: 今は無視（将来 warn/err へ拡張可）
-//     * 重複キー: ERR（例: "a" が2回出現）
-//     * 必須欠落: 判定は続行、Reasonに注意文（"読み取れない、文字列があります"）
-//     * 「条件あり＆スキャン欠落」: 'ignore' or 'error'（ERR化）を選択可
-//     * DATETIME/DATE/TIME は指定typeどおりに厳密扱い（合成なし）
-//     * TZ: JST(+09:00)
-//  - 本版の追加/維持:
-//     * サブテーブルの「空行」を自動除去（先頭に空行が出ない）
-//     * 入力欄下に「最後のSCAN生データ」と「理由（ERR/NGの内訳）」表示
-//     * ★ NG/ERR の場合は SCAN欄に入力を残す（OK のときのみクリア）
+// TANA-OROSHI / 単純区切り型スキャナ（条件2本 + AND/OR、a〜eグループ）
+// ✅ トークン順は CFG.slots に従って解釈（決め打ちしない）
+// ✅ SCANは「slotsの定義」に従ってパース
+// ✅ UIは space: scan_area に固定描画（無ければ最下部フォールバック）
+// ✅ 連結子(as1,bs1,...)未設定 + 2本目条件あり → 設定エラー（ERR）
+// ✅ 2本目の値(a2,b2,...)だけ入っていて条件(aj2,bj2,...)が未選択 → 設定エラー（ERR）
 //
 // version:
-window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
+window.__TANA_PC_VERSION = 'pc-ng-rules-2025-11-10-25';
 
 (function () {
   'use strict';
 
   // ===== 設定 =====
   const CFG = {
-    // SCAN入力UIを置く kintone スペースコード
-    spaceId: 'scan_area',
+    spaceId: 'scan_area',               // SCAN UI を置くスペース
+    delimiter: /\s+/,                   // トークン区切り（将来ここを差し替えればOK）
 
-    // ★★ 条件あり＆スキャン欠落の挙動を選択 ★★
-    //  'ignore' = 判定は続行（ResultはOK/NGのまま）。Reasonに注意文を出す。
-    //  'error'  = ERR（設定エラー扱い）。Reasonに注意文を出す。
-    missingScanWithCondPolicy: 'ignore',
-    missingScanWithCondNote: '条件指定されていますが、読み取れません',
-
-    // トークン定義: 各トークンの before/after と型（サービス管理画面から出力する想定）
-    tokenDefs: [
-      { target: 'a', label: 'a', type: 'text',     before: 'a=', after: ';' },
-      { target: 'b', label: 'b', type: 'number',   before: 'b=', after: ';' },
-      { target: 'c', label: 'c', type: 'datetime', before: 'c=', after: ';' },
-      { target: 'd', label: 'd', type: 'date',     before: 'd=', after: ';' },
-      { target: 'e', label: 'e', type: 'time',     before: 'e=', after: ';' },
+    // ★★★ トークン解釈ルール（将来サービス側でここを書き換えてJS生成する想定）★★★
+    // name: 論理名, type: text/number/datetime/date/time, tokens: 消費トークン数
+    slots: [
+      { name: 'a', type: 'text',     tokens: 1 }, // 文字列
+      { name: 'b', type: 'number',   tokens: 1 }, // 数値
+      { name: 'c', type: 'datetime', tokens: 2 }, // 日時（date + time）
+      { name: 'd', type: 'date',     tokens: 1 }, // DATE
+      { name: 'e', type: 'time',     tokens: 1 }, // TIME
     ],
 
-    // マッチ時の挙動
-    caseInsensitiveTokens: true,        // before/after のマッチで大小文字を無視
-    duplicatePolicy: 'error',           // 同一トークン複数ヒットは ERR
-    missingKeyNote: '読み取れない、文字列があります', // 必須欠落時の注意メッセージ
-
-    // テーブルまわり
-    hideEmptyRows: true,                // 空行（全項目が空）は表示しない
-    timezoneOffset: '+09:00',           // JST固定
-
-    // サブテーブル定義
+    // サブテーブル
     tableCode: 'scan_table',
     tableFields: {
-      scanAt: 'scan_at',                // DATETIME（スキャン記録時刻）
+      scanAt: 'scan_at',                // DATETIME
       a: 'at',                          // TEXT
       b: 'bt',                          // NUMBER
       c: 'ct',                          // DATETIME
       d: 'dt',                          // DATE
       e: 'et',                          // TIME
-      result: 'result',                 // TEXT（OK/NG/ERR）
+      result: 'result',                 // TEXT
       reason: 'reason',                 // MULTI_LINE_TEXT
     },
 
     // ルール用フィールド（条件×2 + 連結子）
     ruleFields: {
-      a: 'a',   aj: 'aj',   a2: 'a2', aj2: 'aj2', as1: 'as1',
-      b: 'b',   bj: 'bj',   b2: 'b2', bj2: 'bj2', bs1: 'bs1',
-      c: 'c',   cj: 'cj',   c2: 'c2', cj2: 'cj2', cs1: 'cs1',
-      d: 'd',   dj: 'dj',   d2: 'd2', dj2: 'dj2', ds1: 'ds1',
-      e: 'e',   ej: 'ej',   e2: 'e2', ej2: 'ej2', es1: 'es1',
-    },
+      // a: TEXT
+      a: 'a',   aj: 'aj',
+      a2: 'a2', aj2: 'aj2',
+      as1: 'as1',           // or / and
 
-    // すべて必須（ただし欠落は ERR にはせず、注意Reasonに記録）
-    requiredTargets: ['a','b','c','d','e'],
+      // b: NUMBER
+      b: 'b',   bj: 'bj',
+      b2: 'b2', bj2: 'bj2',
+      bs1: 'bs1',
 
-    // UI表示（例/最後のSCAN/理由）の文字数上限・入力保持ポリシー
-    ui: {
-      helpExample: '例: a=TEST; b=10; c=2025-11-14 00:00; d=2025-11-14; e=00:00; → Enter',
-      showLastScan: true,
-      lastScanLabel: '最後のSCAN',
-      lastScanMaxChars: 200,
-      showReasons: true,
-      reasonsLabel: '理由',
-      reasonsMaxChars: 300,
-      // ★ NG/ERR のときに SCAN欄の入力を残す（OK はクリア）
-      keepInputOnResults: ['NG', 'ERR'],
-      // 入力を残した際に全選択するなら true
-      selectAllWhenKeeping: true
+      // c: DATETIME
+      c: 'c',   cj: 'cj',
+      c2: 'c2', cj2: 'cj2',
+      cs1: 'cs1',
+
+      // d: DATE
+      d: 'd',   dj: 'dj',
+      d2: 'd2', dj2: 'dj2',
+      ds1: 'ds1',
+
+      // e: TIME
+      e: 'e',   ej: 'ej',
+      e2: 'e2', ej2: 'ej2',
+      es1: 'es1',
     },
   };
 
   // ===== 小ユーティリティ =====
   const val = (rec, code) => (rec[code] ? rec[code].value : '');
-  const nz  = (s) => String(s ?? '').trim() !== '';
 
   function nowIso() { return new Date().toISOString(); }
 
-  function escapeRegExp(s) {
-    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  }
-
   function toIsoFromDateTimeParts(dateStr, timeStr) {
     if (!dateStr || !timeStr) return null;
-    const dt = new Date(`${dateStr}T${timeStr}:00${CFG.timezoneOffset}`);
+    const dt = new Date(`${dateStr}T${timeStr}:00+09:00`);
     return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
   }
 
   function parseDateLocal(dateStr) {
     if (!dateStr) return null;
-    const d = new Date(`${dateStr}T00:00:00${CFG.timezoneOffset}`);
+    const d = new Date(`${dateStr}T00:00:00+09:00`);
     return Number.isNaN(d.getTime()) ? null : d;
   }
 
@@ -121,34 +95,15 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
   }
 
   function sameYMD(a, b) {
-    return a && b && a.getFullYear() === b.getFullYear()
-      && a.getMonth() === b.getMonth()
-      && a.getDate() === b.getDate();
+    return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
   }
-  function sameHM(a, b) {
-    return a && b && a.getHours() === b.getHours() && a.getMinutes() === b.getMinutes();
-  }
+  function sameHM(a, b) { return a.getHours() === b.getHours() && a.getMinutes() === b.getMinutes(); }
 
-  function parseFlexibleDateTime(dtRaw) {
-    const s = String(dtRaw || '').trim();
-    let m = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})$/.exec(s);          // YYYY-MM-DD HH:mm
-    if (m) return { date: m[1], time: m[2] };
-    m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(s);                // YYYY-MM-DDTHH:mm
-    if (m) return { date: m[1], time: m[2] };
-    return null;
-  }
-
-  function truncate(s, max) {
-    const t = String(s || '');
-    return (t.length <= max) ? t : (t.slice(0, Math.max(0, max - 1)) + '…');
-  }
-
-  // ===== 判定関数 =====
+  // ===== 判定関数（単一条件 → {specified, ok, reason}） =====
   function judgeText(scan, base, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified || base == null || base === '' || scan == null || scan === '') {
-      return { specified, ok: true, reason: null };
-    }
+    if (!specified || base == null || base === '') return { specified, ok: true, reason: null };
+
     const s = String(scan ?? ''), b = String(base ?? '');
     let ok = true;
     switch (op) {
@@ -166,11 +121,12 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
 
   function judgeNumber(scanNum, baseNum, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified || baseNum == null || baseNum === '' || scanNum == null || scanNum === '') {
+    if (!specified || baseNum == null || baseNum === '' || Number.isNaN(Number(baseNum))) {
       return { specified, ok: true, reason: null };
     }
     const s = Number(scanNum), b = Number(baseNum);
-    if (Number.isNaN(s)) return { specified, ok: true, reason: null };
+    if (Number.isNaN(s)) return { specified, ok: false, reason: `${label}:${op} (scan:NaN, base:${b})` };
+
     let ok = true;
     switch (op) {
       case '同じ': ok = (s === b); break;
@@ -186,8 +142,12 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
 
   function judgeDateTime(scanIso, baseIso, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified || !scanIso || !baseIso) return { specified, ok: true, reason: null };
-    const s = new Date(scanIso), b = new Date(baseIso);
+    if (!specified) return { specified, ok: true, reason: null };
+
+    const s = scanIso ? new Date(scanIso) : null;
+    const b = baseIso ? new Date(baseIso) : null;
+    if (!s || !b) return { specified, ok: false, reason: `${label}:${op} (scan:${s ? s.toISOString() : 'NaN'}, base:${b ? b.toISOString() : 'NaN'})` };
+
     let ok = true;
     switch (op) {
       case '同じ':           ok = s.getTime() === b.getTime(); break;
@@ -205,9 +165,12 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
 
   function judgeDate(scanDateStr, baseDateStr, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified || !scanDateStr || !baseDateStr) return { specified, ok: true, reason: null };
-    const s = parseDateLocal(scanDateStr), b = parseDateLocal(baseDateStr);
-    if (!s || !b) return { specified, ok: true, reason: null };
+    if (!specified) return { specified, ok: true, reason: null };
+
+    const s = scanDateStr ? parseDateLocal(scanDateStr) : null;
+    const b = baseDateStr ? parseDateLocal(baseDateStr) : null;
+    if (!s || !b) return { specified, ok: false, reason: `${label}:${op} (scan:${s ? s.toISOString() : 'NaN'}, base:${b ? b.toISOString() : 'NaN'})` };
+
     let ok = true;
     const ss = s.getTime(), bb = b.getTime();
     switch (op) {
@@ -222,24 +185,27 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
 
   function judgeTime(scanMin, baseTimeStr, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified || scanMin == null || !baseTimeStr) return { specified, ok: true, reason: null };
-    const b = parseTimeToMin(baseTimeStr);
-    if (b == null) return { specified, ok: true, reason: null };
+    if (!specified) return { specified, ok: true, reason: null };
+
+    const s = scanMin ?? null;
+    const b = baseTimeStr ? parseTimeToMin(baseTimeStr) : null;
+    if (s == null || b == null) return { specified, ok: false, reason: `${label}:${op} (scan:${s}, base:${b})` };
+
     let ok = true;
     switch (op) {
-      case '同じ': ok = (scanMin === b); break;
-      case '以外': ok = (scanMin !== b); break;
-      case '以降': ok = (scanMin >= b); break;
-      case '以前': ok = (scanMin <= b); break;
+      case '同じ': ok = (s === b); break;
+      case '以外': ok = (s !== b); break;
+      case '以降': ok = (s >= b); break;
+      case '以前': ok = (s <= b); break;
       default: return { specified, ok: true, reason: null };
     }
-    return { specified, ok, reason: ok ? null : `${label}:${op} (scan:${scanMin}, base:${b})` };
+    return { specified, ok, reason: ok ? null : `${label}:${op} (scan:${s}, base:${b})` };
   }
 
   // conds: [{specified, ok, reason}], join:'and'|'or'
   function combineConds(conds, join) {
     const specified = conds.filter(c => c.specified);
-    if (specified.length === 0) return { ok: true, reasons: [] }; // 未設定は通す
+    if (specified.length === 0) return { ok: true, reasons: [] };       // 未設定は通す
     const oks = specified.map(c => c.ok);
     const ok = (join === 'or') ? oks.some(Boolean) : oks.every(Boolean);
     const reasons = specified.filter(c => !c.ok).map(c => c.reason);
@@ -249,277 +215,250 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
   function resolveJoinOrConfigError(joinRaw, cond2, label) {
     const hasSecond = cond2.specified;
     const t = String(joinRaw || '').trim().toLowerCase();
+
     if (hasSecond && t !== 'and' && t !== 'or') {
-      return { isError: true, join: 'and', message: `設定エラー: ${label} の連結条件を選択してください` };
+      return {
+        isError: true,
+        join: 'and', // ダミー
+        message: `設定エラー: ${label} の連結条件を選択してください`,
+      };
     }
-    const join = (t === 'or') ? 'or' : 'and';
+    const join = (t === 'or') ? 'or' : 'and'; // cond2無し or 未指定 → and
     return { isError: false, join, message: null };
   }
 
-  // 2本目: 「値はあるのに条件が未選択」→ ERR
+  // 2本目: 「値はあるのに条件が空」のチェック
   function checkSecondFieldConfig(base2, op2, label) {
-    const hasValue = nz(base2);
+    const hasValue = String(base2 ?? '').trim() !== '';
     const hasOp = !!op2 && op2 !== '指定なし';
     if (hasValue && !hasOp) {
-      return { isError: true, message: `設定エラー: ${label} の条件を選択してください` };
+      return {
+        isError: true,
+        message: `設定エラー: ${label} の条件を選択してください`,
+      };
     }
     return { isError: false, message: null };
   }
 
-  // ===== 「条件あり＆スキャン欠落」の共通チェック =====
-  function applyMissingScanPolicy({ scanMissing, condSpecified, label, baseReasons }) {
-    if (!condSpecified || !scanMissing) {
-      return { reasons: baseReasons, configError: false, overrideOk: null };
-    }
-    const msg = `${label}: ${CFG.missingScanWithCondNote}`;
-    if (CFG.missingScanWithCondPolicy === 'error') {
-      return { reasons: [...baseReasons, msg], configError: true, overrideOk: false };
-    }
-    // ignore: 判定はそのまま（理由だけ追記）
-    return { reasons: [...baseReasons, msg], configError: false, overrideOk: null };
-  }
-
-  // ===== グループ評価 =====
+  // ===== グループ（a〜e）評価 =====
   const RF = CFG.ruleFields;
 
   function evalGroupA(rec, parsed) {
     const base2 = val(rec, RF.a2);
     const op2   = val(rec, RF.aj2);
 
-    const second = checkSecondFieldConfig(base2, op2, 'a2(aj2)');
-    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+    // 2本目の値だけ入っていて op が空 → 設定エラー
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'a2(aj2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
 
     const c1 = judgeText(parsed.aText, val(rec, RF.a),  val(rec, RF.aj),  'a1');
     const c2 = judgeText(parsed.aText, base2, op2, 'a2');
 
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.as1), c2, 'a(as1)');
-    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
 
     const comb = combineConds([c1, c2], joinCheck.join);
-
-    const condSpecified = c1.specified || c2.specified;
-    const scanMissing   = !(parsed.aText != null && parsed.aText !== '');
-    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'a', baseReasons: comb.reasons });
-
-    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
-    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupB(rec, parsed) {
     const base2 = val(rec, RF.b2);
     const op2   = val(rec, RF.bj2);
 
-    const second = checkSecondFieldConfig(base2, op2, 'b2(bj2)');
-    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'b2(bj2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
 
     const c1 = judgeNumber(parsed.bNumber, val(rec, RF.b),  val(rec, RF.bj),  'b1');
     const c2 = judgeNumber(parsed.bNumber, base2, op2, 'b2');
 
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.bs1), c2, 'b(bs1)');
-    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
 
     const comb = combineConds([c1, c2], joinCheck.join);
-
-    const condSpecified = c1.specified || c2.specified;
-    const scanMissing   = (parsed.bNumber == null);
-    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'b', baseReasons: comb.reasons });
-
-    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
-    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupC(rec, parsed) {
     const base2 = val(rec, RF.c2);
     const op2   = val(rec, RF.cj2);
 
-    const second = checkSecondFieldConfig(base2, op2, 'c2(cj2)');
-    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'c2(cj2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
 
     const c1 = judgeDateTime(parsed.cDateTimeIso, val(rec, RF.c),  val(rec, RF.cj),  'c1');
     const c2 = judgeDateTime(parsed.cDateTimeIso, base2, op2, 'c2');
 
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.cs1), c2, 'c(cs1)');
-    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
 
     const comb = combineConds([c1, c2], joinCheck.join);
-
-    const condSpecified = c1.specified || c2.specified;
-    const scanMissing   = !parsed.cDateTimeIso;
-    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'c', baseReasons: comb.reasons });
-
-    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
-    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupD(rec, parsed) {
     const base2 = val(rec, RF.d2);
     const op2   = val(rec, RF.dj2);
 
-    const second = checkSecondFieldConfig(base2, op2, 'd2(dj2)');
-    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'd2(dj2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
 
     const c1 = judgeDate(parsed.dDateStr, val(rec, RF.d),  val(rec, RF.dj),  'd1');
     const c2 = judgeDate(parsed.dDateStr, base2, op2, 'd2');
 
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.ds1), c2, 'd(ds1)');
-    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
 
     const comb = combineConds([c1, c2], joinCheck.join);
-
-    const condSpecified = c1.specified || c2.specified;
-    const scanMissing   = !parsed.dDateStr;
-    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'd', baseReasons: comb.reasons });
-
-    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
-    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evalGroupE(rec, parsed) {
     const base2 = val(rec, RF.e2);
     const op2   = val(rec, RF.ej2);
 
-    const second = checkSecondFieldConfig(base2, op2, 'e2(ej2)');
-    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+    const secondCheck = checkSecondFieldConfig(base2, op2, 'e2(ej2)');
+    if (secondCheck.isError) {
+      return { ok: false, reasons: [secondCheck.message], configError: true };
+    }
 
     const c1 = judgeTime(parsed.eMinutes, val(rec, RF.e),  val(rec, RF.ej),  'e1');
     const c2 = judgeTime(parsed.eMinutes, base2, op2, 'e2');
 
     const joinCheck = resolveJoinOrConfigError(val(rec, RF.es1), c2, 'e(es1)');
-    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+    if (joinCheck.isError) {
+      return { ok: false, reasons: [joinCheck.message], configError: true };
+    }
 
     const comb = combineConds([c1, c2], joinCheck.join);
-
-    const condSpecified = c1.specified || c2.specified;
-    const scanMissing   = !(parsed.eTimeStr);
-    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'e', baseReasons: comb.reasons });
-
-    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
-    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: comb.reasons, configError: false };
   }
 
   function evaluateAll(rec, parsed) {
     const reasons = [];
     let configError = false;
-    let okAll = true;
 
-    const groups = [evalGroupA(rec, parsed), evalGroupB(rec, parsed), evalGroupC(rec, parsed), evalGroupD(rec, parsed), evalGroupE(rec, parsed)];
-    for (const g of groups) {
-      if (!g.ok) okAll = false;
-      if (g.configError) configError = true;
-      if (g.reasons && g.reasons.length) reasons.push(...g.reasons);
+    const ga = evalGroupA(rec, parsed); if (!ga.ok) reasons.push(...ga.reasons); if (ga.configError) configError = true;
+    const gb = evalGroupB(rec, parsed); if (!gb.ok) reasons.push(...gb.reasons); if (gb.configError) configError = true;
+    const gc = evalGroupC(rec, parsed); if (!gc.ok) reasons.push(...gc.reasons); if (gc.configError) configError = true;
+    const gd = evalGroupD(rec, parsed); if (!gd.ok) reasons.push(...gd.reasons); if (gd.configError) configError = true;
+    const ge = evalGroupE(rec, parsed); if (!ge.ok) reasons.push(...ge.reasons); if (ge.configError) configError = true;
+
+    if (configError) {
+      return { ok: false, reasons, configError: true };
     }
-
-    return { ok: !configError && okAll, reasons, configError };
+    return { ok: reasons.length === 0, reasons, configError: false };
   }
 
-  // ===== 文字列 → トークン抽出 =====
-  function collectTokenValues(text, before, after, caseInsensitive) {
-    const b = escapeRegExp(before);
-    const a = escapeRegExp(after);
-    const flags = 'g' + (caseInsensitive ? 'i' : '');
-    const re = new RegExp(b + '([\\s\\S]*?)' + a, flags);
-    const found = [];
-    let m;
-    while ((m = re.exec(text)) !== null) {
-      found.push(String(m[1]).trim());
-    }
-    return found;
-  }
-
-  // ===== SCAN パース（重複はERR、欠落は注意） =====
+  // ===== SCAN パース（★slots に従って柔軟に解釈★） =====
   function parseScan(raw) {
     const text = String(raw || '').trim();
-    if (!text) return { parsed: null, parseErr: 'SCAN が空です' };
+    if (!text) throw new Error('SCAN が空です');
 
+    const tokens = text.split(CFG.delimiter).filter(t => t.length > 0);
+    const slots = CFG.slots;
+    const minTokens = slots.reduce((sum, s) => sum + (s.tokens || 1), 0);
+
+    if (tokens.length < minTokens) {
+      throw new Error(`SCAN トークン数が不足しています（必要:${minTokens}個 / 実際:${tokens.length}個）`);
+    }
+    // 余ったトークンは今は無視（将来ログに残したければここで残せる）
+
+    let idx = 0;
+
+    // パース結果（評価に使う論理値）
     const parsed = {
-      aText: null, bNumber: null, cDateTimeIso: null, dDateStr: null, eTimeStr: null, eMinutes: null,
-      raw: text, reasons: [], configError: false
+      aText: null,
+      bNumber: null,
+      cDateTimeIso: null,
+      dDateStr: null,
+      eTimeStr: null,
+      eMinutes: null,
+      raw: text,
     };
 
-    const missingTargets = [];
+    for (const slot of slots) {
+      const n = slot.tokens || 1;
+      const slice = tokens.slice(idx, idx + n);
+      idx += n;
+      const joined = slice.join(' ');
 
-    for (const tok of CFG.tokenDefs) {
-      const hits = collectTokenValues(text, tok.before, tok.after, CFG.caseInsensitiveTokens);
-
-      if (hits.length === 0) {
-        if (CFG.requiredTargets.includes(tok.target)) missingTargets.push(tok.label || tok.target);
-        continue;
-      }
-      if (hits.length > 1 && CFG.duplicatePolicy === 'error') {
-        parsed.configError = true;
-        parsed.reasons.push(`${tok.label || tok.target}の読み取り結果が不正です（重複）`);
-        continue;
-      }
-
-      const value = hits[0];
-
-      try {
-        switch (tok.type) {
-          case 'text': {
-            if (tok.target === 'a') parsed.aText = value;
-            break;
-          }
-          case 'number': {
-            const n = Number(value);
-            if (Number.isNaN(n)) throw new Error('数値ではありません');
-            if (tok.target === 'b') parsed.bNumber = n;
-            break;
-          }
-          case 'datetime': {
-            const parts = parseFlexibleDateTime(value);
-            if (!parts) throw new Error('日時フォーマットが不正です');
-            const iso = toIsoFromDateTimeParts(parts.date, parts.time);
-            if (!iso) throw new Error('日時に変換できません');
-            if (tok.target === 'c') parsed.cDateTimeIso = iso;
-            break;
-          }
-          case 'date': {
-            const d = String(value).trim();
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw new Error('日付フォーマットが不正です');
-            if (tok.target === 'd') parsed.dDateStr = d;
-            break;
-          }
-          case 'time': {
-            const t = String(value).trim();
-            if (!/^\d{2}:\d{2}$/.test(t)) throw new Error('時刻フォーマットが不正です');
-            const min = parseTimeToMin(t);
-            if (min == null) throw new Error('時刻に変換できません');
-            if (tok.target === 'e') { parsed.eTimeStr = t; parsed.eMinutes = min; }
-            break;
-          }
-          default:
-            break; // 将来拡張: 未対応typeは無視
+      switch (slot.type) {
+        case 'text': {
+          if (slot.name === 'a') parsed.aText = joined;
+          break;
         }
-      } catch (err) {
-        parsed.configError = true;
-        parsed.reasons.push(`${tok.label || tok.target}の読み取り結果が不正です`);
+        case 'number': {
+          const num = Number(joined);
+          if (Number.isNaN(num)) {
+            throw new Error(`数値トークンが不正です (${slot.name}="${joined}")`);
+          }
+          if (slot.name === 'b') parsed.bNumber = num;
+          break;
+        }
+        case 'datetime': {
+          // 想定: tokens=2 → [date, time]
+          let dateStr, timeStr;
+          if (slice.length === 2) {
+            [dateStr, timeStr] = slice;
+          } else {
+            const m = /^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2})$/.exec(joined);
+            if (!m) {
+              throw new Error(`日時トークンが不正です (${slot.name}="${joined}")`);
+            }
+            dateStr = m[1];
+            timeStr = m[2];
+          }
+          const iso = toIsoFromDateTimeParts(dateStr, timeStr);
+          if (!iso) {
+            throw new Error(`日時トークンが不正です (${slot.name}="${joined}")`);
+          }
+          if (slot.name === 'c') parsed.cDateTimeIso = iso;
+          break;
+        }
+        case 'date': {
+          const d = joined;
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+            throw new Error(`日付トークンが不正です (${slot.name}="${d}")`);
+          }
+          if (slot.name === 'd') parsed.dDateStr = d;
+          break;
+        }
+        case 'time': {
+          const t = joined;
+          if (!/^\d{2}:\d{2}$/.test(t)) {
+            throw new Error(`時刻トークンが不正です (${slot.name}="${t}")`);
+          }
+          const min = parseTimeToMin(t);
+          if (min == null) throw new Error(`時刻トークンが不正です (${slot.name}="${t}")`);
+          if (slot.name === 'e') {
+            parsed.eTimeStr = t;
+            parsed.eMinutes = min;
+          }
+          break;
+        }
+        default:
+          // 未知typeは今は無視（将来拡張用）
+          break;
       }
     }
 
-    // 必須欠落 → 判定は続行、Reasonだけ追記
-    if (missingTargets.length > 0) {
-      parsed.reasons.push(CFG.missingKeyNote);
-    }
-
-    return { parsed, parseErr: null };
-  }
-
-  // ===== サブテーブルの空行除去 =====
-  function isCellEmpty(cell) {
-    if (!cell || typeof cell.value === 'undefined' || cell.value === null) return true;
-    return String(cell.value).trim() === '';
-  }
-  function isRowEffectivelyEmpty(row) {
-    if (!row || !row.value) return true;
-    const tf = CFG.tableFields;
-    const v = row.value;
-    const targets = [tf.scanAt, tf.a, tf.b, tf.c, tf.d, tf.e, tf.result, tf.reason];
-    return targets.every(code => isCellEmpty(v[code]));
-  }
-  function pruneEmptyRowsOnRecord(rec) {
-    const tcode = CFG.tableCode;
-    if (!rec[tcode] || !Array.isArray(rec[tcode].value)) return;
-    rec[tcode].value = rec[tcode].value.filter(row => !isRowEffectivelyEmpty(row));
+    return parsed;
   }
 
   // ===== サブテーブル追記 =====
@@ -530,9 +469,6 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
     if (!rec[CFG.tableCode]) rec[CFG.tableCode] = { type: 'SUBTABLE', value: [] };
     const table = rec[CFG.tableCode];
 
-    const combinedConfigError = evalRes.configError || parsed.configError;
-    const reasonsText = [...(evalRes.reasons || []), ...(parsed.reasons || [])].filter(Boolean).join(' / ');
-
     const row = { value: {} };
     row.value[tf.scanAt] = { type: 'DATETIME', value: nowIso() };
     row.value[tf.a]      = { type: 'SINGLE_LINE_TEXT', value: parsed.aText ?? '' };
@@ -541,23 +477,27 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
     row.value[tf.d]      = { type: 'DATE', value: parsed.dDateStr };
     row.value[tf.e]      = { type: 'TIME', value: parsed.eTimeStr };
 
-    const resultStr = combinedConfigError ? 'ERR' : (evalRes.ok ? 'OK' : 'NG');
+    const resultStr = evalRes.configError ? 'ERR' : (evalRes.ok ? 'OK' : 'NG');
     row.value[tf.result] = { type: 'SINGLE_LINE_TEXT', value: resultStr };
-    row.value[tf.reason] = { type: 'MULTI_LINE_TEXT', value: reasonsText };
+    row.value[tf.reason] = { type: 'MULTI_LINE_TEXT', value: evalRes.reasons.join(' / ') };
 
     table.value.push(row);
-
-    if (CFG.hideEmptyRows) pruneEmptyRowsOnRecord(rec);
   }
 
-  // ===== UI（scan_area に設置） =====
+  // ===== UI描画（scan_area に固定、ヘルプは入力の「下」） =====
   function buildScanUI() {
     const space = kintone.app.record.getSpaceElement(CFG.spaceId);
     let mount = space;
-    if (!mount) { mount = document.createElement('div'); mount.id = 'tana-scan-fallback'; document.body.appendChild(mount); }
+    if (!mount) {
+      // フォールバック
+      mount = document.createElement('div');
+      mount.id = 'tana-scan-fallback';
+      document.body.appendChild(mount);
+    }
     while (mount.firstChild) mount.removeChild(mount.firstChild);
 
-    const wrap = document.createElement('div'); wrap.style.margin = '8px 0';
+    const wrap = document.createElement('div');
+    wrap.style.margin = '8px 0';
 
     const row1 = document.createElement('div');
     row1.style.display = 'flex';
@@ -576,39 +516,22 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
 
     const status = document.createElement('span');
     status.textContent = 'READY';
-    status.style.minWidth = '120px';
+    status.style.minWidth = '80px';
     row1.appendChild(status);
 
-    const helpLine = document.createElement('div');
-    helpLine.style.marginTop = '4px';
-    helpLine.style.fontSize = '12px';
-    helpLine.style.color = '#666';
-    helpLine.textContent = CFG.ui.helpExample;
-
-    const lastScanLine = document.createElement('div');
-    lastScanLine.style.marginTop = '2px';
-    lastScanLine.style.fontSize = '12px';
-    lastScanLine.style.color = '#444';
-    lastScanLine.style.wordBreak = 'break-all';
-    lastScanLine.textContent = CFG.ui.showLastScan ? `${CFG.ui.lastScanLabel}: （未実行）` : '';
-
-    const reasonLine = document.createElement('div');
-    reasonLine.style.marginTop = '2px';
-    reasonLine.style.fontSize = '12px';
-    reasonLine.style.color = '#b00000';
-    reasonLine.style.wordBreak = 'break-all';
-    reasonLine.textContent = '';
+    const row2 = document.createElement('div');
+    row2.style.marginTop = '4px';
+    row2.style.fontSize = '12px';
+    row2.style.color = '#666';
+    row2.textContent = 'SCAN （slots設定に従った形式）で入力 → Enter';
 
     wrap.appendChild(row1);
-    wrap.appendChild(helpLine);
-    if (CFG.ui.showLastScan) wrap.appendChild(lastScanLine);
-    if (CFG.ui.showReasons)  wrap.appendChild(reasonLine);
+    wrap.appendChild(row2);
     mount.appendChild(wrap);
 
     clearBtn.addEventListener('click', () => {
       input.value = '';
       status.textContent = 'READY';
-      if (CFG.ui.showReasons)  reasonLine.textContent = '';
       input.focus();
     });
 
@@ -616,74 +539,35 @@ window.__TANA_PC_VERSION = 'pc-key-token-2025-11-18-06';
       if (ev.key !== 'Enter') return;
       ev.preventDefault();
 
-      const rawInput = input.value;   // 生データ（入力そのもの）
       const appRec = kintone.app.record.get();
 
-      // 表示直前に空行を掃除
-      if (CFG.hideEmptyRows && appRec && appRec.record) {
-        pruneEmptyRowsOnRecord(appRec.record);
-        kintone.app.record.set(appRec);
-      }
-
-      const { parsed, parseErr } = parseScan(rawInput);
-      if (parseErr) {
-        // NG（解析段階のエラー）
-        status.textContent = 'NG';
-        status.title = parseErr;
-        if (CFG.ui.showReasons) reasonLine.textContent = `${CFG.ui.reasonsLabel}: ${parseErr}`;
-        if (CFG.ui.showLastScan) lastScanLine.textContent = `${CFG.ui.lastScanLabel}: ${truncate(rawInput, CFG.ui.lastScanMaxChars)}`;
-
-        // NG は入力を残す（選択も可能）
-        if (CFG.ui.selectAllWhenKeeping) {
-          try { input.setSelectionRange(0, input.value.length); } catch (e) {}
-        }
-        input.focus();
+      let parsed;
+      try {
+        parsed = parseScan(input.value);
+      } catch (e) {
+        status.textContent = `NG: ${e.message}`;
         return;
       }
 
-      // 評価
       const evalRes = evaluateAll(appRec.record, parsed);
-
-      // 転記
       appendRow(appRec, parsed, evalRes);
       kintone.app.record.set(appRec);
 
-      // ステータス/理由/最終SCAN
-      const combinedConfigError = evalRes.configError || parsed.configError;
-      const resultKind = combinedConfigError ? 'ERR' : (evalRes.ok ? 'OK' : 'NG');
-      status.textContent = combinedConfigError ? 'ERR (読み取り/設定)' : (evalRes.ok ? 'OK' : 'NG');
-
-      const reasonsText = [...(evalRes.reasons || []), ...(parsed.reasons || [])].filter(Boolean).join(' / ') || '';
-      status.title = reasonsText || '';
-      if (CFG.ui.showReasons) {
-        reasonLine.textContent = reasonsText ? `${CFG.ui.reasonsLabel}: ${truncate(reasonsText, CFG.ui.reasonsMaxChars)}` : '';
-      }
-      if (CFG.ui.showLastScan) {
-        lastScanLine.textContent = `${CFG.ui.lastScanLabel}: ${truncate(parsed.raw, CFG.ui.lastScanMaxChars)}`;
-      }
-
-      // ★ 入力のクリア方針：OK のときだけクリア、NG/ERR は残す
-      const shouldKeep = Array.isArray(CFG.ui.keepInputOnResults) && CFG.ui.keepInputOnResults.includes(resultKind);
-      if (shouldKeep) {
-        // 入力を残して全選択（任意）
-        if (CFG.ui.selectAllWhenKeeping) {
-          try { input.setSelectionRange(0, input.value.length); } catch (e) {}
-        }
+      if (evalRes.configError) {
+        status.textContent = 'ERR (設定エラー)';
       } else {
-        input.value = '';
+        status.textContent = evalRes.ok ? 'OK' : 'NG';
       }
 
+      input.value = '';
       input.focus();
     });
   }
 
   // ===== イベント =====
   kintone.events.on(['app.record.create.show', 'app.record.edit.show'], (event) => {
-    // 表示直後に空行を掃除（常に先頭に空行が出るのを防ぐ）
-    if (CFG.hideEmptyRows && event && event.record) {
-      pruneEmptyRowsOnRecord(event.record);
-    }
     buildScanUI();
     return event;
   });
+
 })();

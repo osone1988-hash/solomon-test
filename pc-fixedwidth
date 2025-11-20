@@ -1,0 +1,675 @@
+// TANA-OROSHI / 文字数仕分け型スキャナ（固定長で順に切り出し）
+//  - 例: "TEST0102025-11-29 00:002025-11-2909:30"
+//  - 主な仕様:
+//     * tokenDefs の {type, length} に従って 先頭→末尾 で固定長切り出し
+//     * 型: 'text' | 'number' | 'datetime' | 'date' | 'time'
+//     * 日時/日付/時刻は複数フォーマット許可（例: 'YYYY-MM-DD HH:mm', 'YYYY/MM/DD HH:mm', 'YYYYMMDDHHmm' 等）
+//     * （推奨）全項目 固定長。最後の項目だけ可変長（「残り全部」）を許可可能（設定）
+//     * 判定/ERR/NG/サブテーブル転記/UIは既存キー型版の骨格を踏襲
+//     * NG/ERR は SCAN欄に残す、OK はクリア
+//     * サブテーブルの空行は表示前に除去
+//     * JST(+09:00)
+//
+// version:
+window.__TANA_PC_VERSION = 'pc-fixedwidth-2025-11-20-01';
+
+(function () {
+  'use strict';
+
+  // ===== 設定 =====
+  const CFG = {
+    // SCAN入力UIを置く kintone スペースコード
+    spaceId: 'scan_area',
+
+    // ★ 固定長の基本: 末尾以外は length 必須。末尾のみ可変長（任意）
+    allowVariableLastToken: false, // true にすると tokenDefs の最後が length 省略（可変長）でもOK
+
+    // 「条件あり＆スキャン欠落」の扱い
+    //  'ignore' = 判定は続行（ResultはOK/NGのまま）。Reasonに注意文を出す。
+    //  'error'  = ERR（設定エラー扱い）。Reasonに注意文を出す。
+    missingScanWithCondPolicy: 'ignore',
+    missingScanWithCondNote: '条件指定されていますが、読み取れません',
+
+    // 余剰文字（合計長より長い入力）の扱い: 'ignore' | 'warn' | 'error'
+    leftoverPolicy: 'warn',
+
+    // 必須欠落時の注意メッセージ（ERRにはしない）
+    missingKeyNote: '読み取れない、文字列があります',
+
+    // トークン定義: 順序どおりに切り出し
+    //  length: 固定長（整数）。末尾可変長にしたい場合は allowVariableLastToken=true かつ length省略。
+    //  formats: 日時/日付/時刻で許可する表記（複数）。lengthに合うものを選択するのが安全。
+    tokenDefs: [
+      { target: 'a', label: 'a', type: 'text',     length: 4,  trim: 'both' },
+      { target: 'b', label: 'b', type: 'number',   length: 3,  trim: 'both' },
+      { target: 'c', label: 'c', type: 'datetime', length: 16, formats: ['YYYY-MM-DD HH:mm', 'YYYY-MM-DDTHH:mm', 'YYYY/MM/DD HH:mm'] },
+      { target: 'd', label: 'd', type: 'date',     length: 10, formats: ['YYYY-MM-DD', 'YYYY/MM/DD'] },
+      { target: 'e', label: 'e', type: 'time',     length: 5,  formats: ['HH:mm'] },
+      // 例: コンパクト日時に切替える場合（上と置換）
+      // { target: 'c', label: 'c', type: 'datetime', length: 12, formats: ['YYYYMMDDHHmm'] },
+      // { target: 'd', label: 'd', type: 'date',     length: 8,  formats: ['YYYYMMDD'] },
+      // { target: 'e', label: 'e', type: 'time',     length: 4,  formats: ['HHmm'] },
+    ],
+
+    // テーブル定義
+    tableCode: 'scan_table',
+    tableFields: {
+      scanAt: 'scan_at',       // DATETIME（スキャン記録時刻）
+      a: 'at',                 // TEXT
+      b: 'bt',                 // NUMBER
+      c: 'ct',                 // DATETIME
+      d: 'dt',                 // DATE
+      e: 'et',                 // TIME
+      result: 'result',        // TEXT（OK/NG/ERR）
+      reason: 'reason',        // MULTI_LINE_TEXT
+    },
+
+    // ルール用フィールド（条件×2 + 連結子）—既存踏襲
+    ruleFields: {
+      a: 'a',   aj: 'aj',   a2: 'a2', aj2: 'aj2', as1: 'as1',
+      b: 'b',   bj: 'bj',   b2: 'b2', bj2: 'bj2', bs1: 'bs1',
+      c: 'c',   cj: 'cj',   c2: 'c2', cj2: 'cj2', cs1: 'cs1',
+      d: 'd',   dj: 'dj',   d2: 'd2', dj2: 'dj2', ds1: 'ds1',
+      e: 'e',   ej: 'ej',   e2: 'e2', ej2: 'ej2', es1: 'es1',
+    },
+
+    // すべて必須（ただし欠落は ERR にはせず、注意Reasonに記録）
+    requiredTargets: ['a','b','c','d','e'],
+
+    // UI 表示など
+    ui: {
+      helpExample: '例: TEST0102025-11-29 00:002025-11-2909:30 → Enter',
+      showLastScan: true,
+      lastScanLabel: '最後のSCAN',
+      showReasons: true,
+      reasonsLabel: '理由',
+      keepInputOnResults: ['NG', 'ERR'], // NG/ERRは残す、OKはクリア
+      selectAllWhenKeeping: true,
+      timezoneOffset: '+09:00'  // JST固定
+    }
+  };
+
+  // ===== 小ユーティリティ =====
+  const val = (rec, code) => (rec[code] ? rec[code].value : '');
+  const nz  = (s) => String(s ?? '').trim() !== '';
+
+  function nowIso() { return new Date().toISOString(); }
+
+  function parseTimeToMin(hhmm) {
+    if (!hhmm) return null;
+    const m = /^(\d{2}):?(\d{2})$/.exec(hhmm); // HH:mm or HHmm
+    if (!m) return null;
+    const h = Number(m[1]), mi = Number(m[2]);
+    if (Number.isNaN(h) || Number.isNaN(mi) || h < 0 || h > 23 || mi < 0 || mi > 59) return null;
+    return h * 60 + mi;
+  }
+
+  function parseDateToNorm(dateRaw) {
+    const s = String(dateRaw || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;                   // YYYY-MM-DD
+    if (/^\d{4}\/\d{2}\/\d{2}$/.test(s)) return s.replace(/\//g,'-'); // YYYY/MM/DD -> YYYY-MM-DD
+    const m = /^(\d{4})(\d{2})(\d{2})$/.exec(s);                    // YYYYMMDD
+    if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+    return null;
+  }
+
+  function parseDateTimeToParts(dtRaw) {
+    const s = String(dtRaw || '').trim();
+    // YYYY-MM-DD HH:mm / YYYY-MM-DDTHH:mm / YYYY/MM/DD HH:mm
+    let m = /^(\d{4}[-\/]\d{2}[-\/]\d{2})[ T](\d{2}:\d{2})$/.exec(s);
+    if (m) return { date: m[1].replace(/\//g,'-'), time: m[2] };
+    // YYYYMMDDHHmm
+    m = /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})$/.exec(s);
+    if (m) return { date: `${m[1]}-${m[2]}-${m[3]}`, time: `${m[4]}:${m[5]}` };
+    return null;
+  }
+
+  function toIsoFromDateTimeParts(dateStr, timeStr) {
+    if (!dateStr || !timeStr) return null;
+    const tz = CFG.ui.timezoneOffset || '+09:00';
+    const dt = new Date(`${dateStr}T${timeStr}:00${tz}`);
+    return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
+  }
+
+  function truncate(s, max) {
+    const t = String(s || '');
+    return (max && t.length > max) ? (t.slice(0, max - 1) + '…') : t;
+  }
+
+  // ===== 判定関数（既存踏襲 + スキャン欠落は判定スキップ=OK扱い） =====
+  function judgeText(scan, base, op, label) {
+    const specified = !!op && op !== '指定なし';
+    if (!specified || base == null || base === '' || scan == null || scan === '') {
+      return { specified, ok: true, reason: null };
+    }
+    const s = String(scan ?? ''), b = String(base ?? '');
+    let ok = true;
+    switch (op) {
+      case 'まったく同じ': ok = (s === b); break;
+      case '含む':         ok = s.includes(b); break;
+      case '含まない':     ok = !s.includes(b); break;
+      case '前方一致':
+      case '前部一致':     ok = s.startsWith(b); break;
+      case '後方一致':
+      case '後部一致':     ok = s.endsWith(b); break;
+      default: return { specified, ok: true, reason: null };
+    }
+    return { specified, ok, reason: ok ? null : `${label}:${op}` };
+  }
+
+  function judgeNumber(scanNum, baseNum, op, label) {
+    const specified = !!op && op !== '指定なし';
+    if (!specified || baseNum == null || baseNum === '' || scanNum == null || scanNum === '') {
+      return { specified, ok: true, reason: null };
+    }
+    const s = Number(scanNum), b = Number(baseNum);
+    if (Number.isNaN(s)) return { specified, ok: true, reason: null };
+    let ok = true;
+    switch (op) {
+      case '同じ': ok = (s === b); break;
+      case '異なる': ok = (s !== b); break;
+      case '以上': ok = (s >= b); break;
+      case '以下': ok = (s <= b); break;
+      case 'より大きい': ok = (s > b); break;
+      case '未満': ok = (s < b); break;
+      default: return { specified, ok: true, reason: null };
+    }
+    return { specified, ok, reason: ok ? null : `${label}:${op} (scan:${s}, base:${b})` };
+  }
+
+  function judgeDateTime(scanIso, baseIso, op, label) {
+    const specified = !!op && op !== '指定なし';
+    if (!specified || !scanIso || !baseIso) return { specified, ok: true, reason: null };
+    const s = new Date(scanIso), b = new Date(baseIso);
+    let ok = true;
+    switch (op) {
+      case '同じ':           ok = s.getTime() === b.getTime(); break;
+      case '以外':           ok = s.getTime() !== b.getTime(); break;
+      case '以降':           ok = s.getTime() >= b.getTime(); break;
+      case '以前':           ok = s.getTime() <= b.getTime(); break;
+      case '日付が同じ':     ok = s.toDateString() === b.toDateString(); break;
+      case '日付が異なる':   ok = s.toDateString() !== b.toDateString(); break;
+      case '時間が同じ':     ok = (s.getHours()===b.getHours() && s.getMinutes()===b.getMinutes()); break;
+      case '時間が異なる':   ok = !(s.getHours()===b.getHours() && s.getMinutes()===b.getMinutes()); break;
+      default: return { specified, ok: true, reason: null };
+    }
+    return { specified, ok, reason: ok ? null : `${label}:${op}` };
+  }
+
+  function judgeDate(scanDateStr, baseDateStr, op, label) {
+    const specified = !!op && op !== '指定なし';
+    if (!specified || !scanDateStr || !baseDateStr) return { specified, ok: true, reason: null };
+    const s = parseDateToNorm(scanDateStr), b = parseDateToNorm(baseDateStr);
+    if (!s || !b) return { specified, ok: true, reason: null };
+    const ss = new Date(`${s}T00:00:00+09:00`).getTime();
+    const bb = new Date(`${b}T00:00:00+09:00`).getTime();
+    let ok = true;
+    switch (op) {
+      case '同じ': ok = (ss === bb); break;
+      case '以外': ok = (ss !== bb); break;
+      case '以降': ok = (ss >= bb); break;
+      case '以前': ok = (ss <= bb); break;
+      default: return { specified, ok: true, reason: null };
+    }
+    return { specified, ok, reason: ok ? null : `${label}:${op}` };
+  }
+
+  function judgeTime(scanMin, baseTimeStr, op, label) {
+    const specified = !!op && op !== '指定なし';
+    if (!specified || scanMin == null || !baseTimeStr) return { specified, ok: true, reason: null };
+    const b = parseTimeToMin(baseTimeStr);
+    if (b == null) return { specified, ok: true, reason: null };
+    let ok = true;
+    switch (op) {
+      case '同じ': ok = (scanMin === b); break;
+      case '以外': ok = (scanMin !== b); break;
+      case '以降': ok = (scanMin >= b); break;
+      case '以前': ok = (scanMin <= b); break;
+      default: return { specified, ok: true, reason: null };
+    }
+    return { specified, ok, reason: ok ? null : `${label}:${op} (scan:${scanMin}, base:${b})` };
+  }
+
+  function combineConds(conds, join) {
+    const specified = conds.filter(c => c.specified);
+    if (specified.length === 0) return { ok: true, reasons: [] };
+    const oks = specified.map(c => c.ok);
+    const ok = (join === 'or') ? oks.some(Boolean) : oks.every(Boolean);
+    const reasons = specified.filter(c => !c.ok).map(c => c.reason);
+    return { ok, reasons };
+  }
+
+  function resolveJoinOrConfigError(joinRaw, cond2, label) {
+    const hasSecond = cond2.specified;
+    const t = String(joinRaw || '').trim().toLowerCase();
+    if (hasSecond && t !== 'and' && t !== 'or') {
+      return { isError: true, join: 'and', message: `設定エラー: ${label} の連結条件を選択してください` };
+    }
+    const join = (t === 'or') ? 'or' : 'and';
+    return { isError: false, join, message: null };
+  }
+
+  function checkSecondFieldConfig(base2, op2, label) {
+    const hasValue = nz(base2);
+    const hasOp = !!op2 && op2 !== '指定なし';
+    if (hasValue && !hasOp) {
+      return { isError: true, message: `設定エラー: ${label} の条件を選択してください` };
+    }
+    return { isError: false, message: null };
+  }
+
+  // ===== 「条件あり＆スキャン欠落」の共通チェック =====
+  function applyMissingScanPolicy({ scanMissing, condSpecified, label, baseReasons }) {
+    if (!condSpecified || !scanMissing) {
+      return { reasons: baseReasons, configError: false, overrideOk: null };
+    }
+    const msg = `${label}: ${CFG.missingScanWithCondNote}`;
+    if (CFG.missingScanWithCondPolicy === 'error') {
+      return { reasons: [...baseReasons, msg], configError: true, overrideOk: false };
+    }
+    return { reasons: [...baseReasons, msg], configError: false, overrideOk: null };
+  }
+
+  // ===== グループ評価 =====
+  const RF = CFG.ruleFields;
+
+  function evalGroupA(rec, parsed) {
+    const base2 = val(rec, RF.a2), op2 = val(rec, RF.aj2);
+    const second = checkSecondFieldConfig(base2, op2, 'a2(aj2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+
+    const c1 = judgeText(parsed.aText, val(rec, RF.a), val(rec, RF.aj), 'a1');
+    const c2 = judgeText(parsed.aText, base2, op2, 'a2');
+
+    const joinCheck = resolveJoinOrConfigError(val(rec, RF.as1), c2, 'a(as1)');
+    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+
+    const comb = combineConds([c1, c2], joinCheck.join);
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = !(parsed.aText != null && parsed.aText !== '');
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'a', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+  }
+
+  function evalGroupB(rec, parsed) {
+    const base2 = val(rec, RF.b2), op2 = val(rec, RF.bj2);
+    const second = checkSecondFieldConfig(base2, op2, 'b2(bj2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+
+    const c1 = judgeNumber(parsed.bNumber, val(rec, RF.b), val(rec, RF.bj), 'b1');
+    const c2 = judgeNumber(parsed.bNumber, base2, op2, 'b2');
+
+    const joinCheck = resolveJoinOrConfigError(val(rec, RF.bs1), c2, 'b(bs1)');
+    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+
+    const comb = combineConds([c1, c2], joinCheck.join);
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = (parsed.bNumber == null);
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'b', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+  }
+
+  function evalGroupC(rec, parsed) {
+    const base2 = val(rec, RF.c2), op2 = val(rec, RF.cj2);
+    const second = checkSecondFieldConfig(base2, op2, 'c2(cj2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+
+    const c1 = judgeDateTime(parsed.cDateTimeIso, val(rec, RF.c), val(rec, RF.cj), 'c1');
+    const c2 = judgeDateTime(parsed.cDateTimeIso, base2, op2, 'c2');
+
+    const joinCheck = resolveJoinOrConfigError(val(rec, RF.cs1), c2, 'c(cs1)');
+    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+
+    const comb = combineConds([c1, c2], joinCheck.join);
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = !parsed.cDateTimeIso;
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'c', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+  }
+
+  function evalGroupD(rec, parsed) {
+    const base2 = val(rec, RF.d2), op2 = val(rec, RF.dj2);
+    const second = checkSecondFieldConfig(base2, op2, 'd2(dj2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+
+    const c1 = judgeDate(parsed.dDateStr, val(rec, RF.d), val(rec, RF.dj), 'd1');
+    const c2 = judgeDate(parsed.dDateStr, base2, op2, 'd2');
+
+    const joinCheck = resolveJoinOrConfigError(val(rec, RF.ds1), c2, 'd(ds1)');
+    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+
+    const comb = combineConds([c1, c2], joinCheck.join);
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = !parsed.dDateStr;
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'd', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+  }
+
+  function evalGroupE(rec, parsed) {
+    const base2 = val(rec, RF.e2), op2 = val(rec, RF.ej2);
+    const second = checkSecondFieldConfig(base2, op2, 'e2(ej2)');
+    if (second.isError) return { ok: false, reasons: [second.message], configError: true };
+
+    const c1 = judgeTime(parsed.eMinutes, val(rec, RF.e), val(rec, RF.ej), 'e1');
+    const c2 = judgeTime(parsed.eMinutes, base2, op2, 'e2');
+
+    const joinCheck = resolveJoinOrConfigError(val(rec, RF.es1), c2, 'e(es1)');
+    if (joinCheck.isError) return { ok: false, reasons: [joinCheck.message], configError: true };
+
+    const comb = combineConds([c1, c2], joinCheck.join);
+    const condSpecified = c1.specified || c2.specified;
+    const scanMissing   = !(parsed.eTimeStr);
+    const applied = applyMissingScanPolicy({ scanMissing, condSpecified, label: 'e', baseReasons: comb.reasons });
+
+    if (applied.overrideOk !== null) return { ok: applied.overrideOk, reasons: applied.reasons, configError: applied.configError };
+    return { ok: comb.ok, reasons: applied.reasons, configError: applied.configError };
+  }
+
+  function evaluateAll(rec, parsed) {
+    const reasons = [];
+    let configError = false;
+    let okAll = true;
+
+    const groups = [evalGroupA(rec, parsed), evalGroupB(rec, parsed), evalGroupC(rec, parsed), evalGroupD(rec, parsed), evalGroupE(rec, parsed)];
+    for (const g of groups) {
+      if (!g.ok) okAll = false;
+      if (g.configError) configError = true;
+      if (g.reasons && g.reasons.length) reasons.push(...g.reasons);
+    }
+
+    return { ok: !configError && okAll, reasons, configError };
+  }
+
+  // ===== 文字数仕分けパース（固定長） =====
+  function parseFixedWidth(raw) {
+    const text = String(raw || '');
+    let idx = 0;
+    const parsed = {
+      aText: null, bNumber: null, cDateTimeIso: null, dDateStr: null, eTimeStr: null, eMinutes: null,
+      raw: text, reasons: [], configError: false
+    };
+
+    const missingTargets = [];
+    const totalExpected = CFG.tokenDefs.reduce((s, t, i) => s + (t.length ? t.length : (i === CFG.tokenDefs.length-1 && CFG.allowVariableLastToken ? (text.length - s) : 0)), 0);
+
+    for (let i=0; i<CFG.tokenDefs.length; i++) {
+      const tok = CFG.tokenDefs[i];
+      const isLast = (i === CFG.tokenDefs.length - 1);
+
+      // 長さ決定
+      let len = tok.length;
+      if ((len == null || typeof len !== 'number') && isLast && CFG.allowVariableLastToken) {
+        len = text.length - idx; // 残り全部
+      }
+      if (len == null || len < 0) {
+        parsed.configError = true;
+        parsed.reasons.push(`${tok.label || tok.target}の設定エラー（length未指定）`);
+        continue;
+      }
+
+      // 切り出し
+      const end = Math.min(idx + len, text.length);
+      let seg = text.slice(idx, end);
+      idx += len;
+
+      // トリム設定
+      const trim = tok.trim || 'both';
+      if (trim === 'both') seg = seg.trim();
+      else if (trim === 'left') seg = seg.replace(/^\s+/, '');
+      else if (trim === 'right') seg = seg.replace(/\s+$/, '');
+
+      const empty = seg.length === 0;
+
+      // 形式チェック & 代入
+      try {
+        switch (tok.type) {
+          case 'text': {
+            if (!empty) parsed.aText = seg;
+            break;
+          }
+          case 'number': {
+            if (empty) break;
+            const n = Number(seg);
+            if (Number.isNaN(n)) throw new Error('数値ではありません');
+            parsed.bNumber = n;
+            break;
+          }
+          case 'datetime': {
+            if (empty) break;
+            const parts = parseDateTimeToParts(seg);
+            if (!parts) throw new Error('日時フォーマットが不正です');
+            const iso = toIsoFromDateTimeParts(parts.date, parts.time);
+            if (!iso) throw new Error('日時に変換できません');
+            parsed.cDateTimeIso = iso;
+            break;
+          }
+          case 'date': {
+            if (empty) break;
+            const d = parseDateToNorm(seg);
+            if (!d) throw new Error('日付フォーマットが不正です');
+            parsed.dDateStr = d;
+            break;
+          }
+          case 'time': {
+            if (empty) break;
+            let t = seg;
+            // HHmm → HH:mm に正規化（許可フォーマット想定）
+            if (/^\d{4}$/.test(t)) t = `${t.slice(0,2)}:${t.slice(2,4)}`;
+            if (!/^\d{2}:\d{2}$/.test(t)) throw new Error('時刻フォーマットが不正です');
+            const min = parseTimeToMin(t);
+            if (min == null) throw new Error('時刻に変換できません');
+            parsed.eTimeStr = t;
+            parsed.eMinutes = min;
+            break;
+          }
+          default:
+            // 未対応type
+            parsed.reasons.push(`${tok.label || tok.target}: 未対応type`);
+        }
+      } catch (err) {
+        parsed.configError = true;
+        parsed.reasons.push(`${tok.label || tok.target}の読み取り結果が不正です`);
+      }
+
+      // 長さ不足の注意（ERRにはしない）
+      if (seg.length < len) {
+        missingTargets.push(tok.label || tok.target);
+        parsed.reasons.push(`${tok.label || tok.target}: 長さ不足（${seg.length}/${len}）`);
+      }
+    }
+
+    // 余剰文字（想定より入力が長い）
+    if (idx < text.length) {
+      const extra = text.length - idx;
+      if (CFG.leftoverPolicy === 'error') {
+        parsed.configError = true;
+        parsed.reasons.push(`末尾に余剰文字があります（+${extra}）`);
+      } else if (CFG.leftoverPolicy === 'warn') {
+        parsed.reasons.push(`末尾に余剰文字があります（+${extra}）`);
+      }
+      // ignore の場合は何もしない
+    }
+
+    // 必須欠落 → 判定は続行、Reasonだけ追記
+    if (missingTargets.length > 0) {
+      parsed.reasons.push(CFG.missingKeyNote);
+    }
+
+    return { parsed, parseErr: null };
+  }
+
+  // ===== サブテーブル空行除去 =====
+  function isCellEmpty(cell) {
+    if (!cell || typeof cell.value === 'undefined' || cell.value === null) return true;
+    return String(cell.value).trim() === '';
+  }
+  function isRowEffectivelyEmpty(row) {
+    if (!row || !row.value) return true;
+    const tf = CFG.tableFields;
+    const v = row.value;
+    const targets = [tf.scanAt, tf.a, tf.b, tf.c, tf.d, tf.e, tf.result, tf.reason];
+    return targets.every(code => isCellEmpty(v[code]));
+  }
+  function pruneEmptyRowsOnRecord(rec) {
+    const tcode = CFG.tableCode;
+    if (!rec[tcode] || !Array.isArray(rec[tcode].value)) return;
+    rec[tcode].value = rec[tcode].value.filter(row => !isRowEffectivelyEmpty(row));
+  }
+
+  // ===== サブテーブル追記 =====
+  function appendRow(appRec, parsed, evalRes) {
+    const rec = appRec.record;
+    const tf = CFG.tableFields;
+
+    if (!rec[CFG.tableCode]) rec[CFG.tableCode] = { type: 'SUBTABLE', value: [] };
+    const table = rec[CFG.tableCode];
+
+    const combinedConfigError = evalRes.configError || parsed.configError;
+    const reasonsText = [...(evalRes.reasons || []), ...(parsed.reasons || [])].filter(Boolean).join(' / ');
+
+    const row = { value: {} };
+    row.value[tf.scanAt] = { type: 'DATETIME', value: nowIso() };
+    row.value[tf.a]      = { type: 'SINGLE_LINE_TEXT', value: parsed.aText ?? '' };
+    row.value[tf.b]      = { type: 'NUMBER', value: parsed.bNumber == null ? '' : String(parsed.bNumber) };
+    row.value[tf.c]      = { type: 'DATETIME', value: parsed.cDateTimeIso };
+    row.value[tf.d]      = { type: 'DATE', value: parsed.dDateStr };
+    row.value[tf.e]      = { type: 'TIME', value: parsed.eTimeStr };
+
+    const resultStr = combinedConfigError ? 'ERR' : (evalRes.ok ? 'OK' : 'NG');
+    row.value[tf.result] = { type: 'SINGLE_LINE_TEXT', value: resultStr };
+    row.value[tf.reason] = { type: 'MULTI_LINE_TEXT', value: reasonsText };
+
+    table.value.push(row);
+    pruneEmptyRowsOnRecord(rec);
+  }
+
+  // ===== UI（scan_area に設置） =====
+  function buildScanUI() {
+    const space = kintone.app.record.getSpaceElement(CFG.spaceId);
+    let mount = space;
+    if (!mount) { mount = document.createElement('div'); mount.id = 'tana-scan-fallback'; document.body.appendChild(mount); }
+    while (mount.firstChild) mount.removeChild(mount.firstChild);
+
+    const wrap = document.createElement('div'); wrap.style.margin = '8px 0';
+
+    const row1 = document.createElement('div');
+    row1.style.display = 'flex';
+    row1.style.alignItems = 'center';
+    row1.style.gap = '8px';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.style.cssText = 'flex:1 1 auto; padding:6px 8px; border:1px solid #ccc; border-radius:6px;';
+    row1.appendChild(input);
+
+    const clearBtn = document.createElement('button');
+    clearBtn.type = 'button';
+    clearBtn.textContent = 'クリア';
+    row1.appendChild(clearBtn);
+
+    const status = document.createElement('span');
+    status.textContent = 'READY';
+    status.style.minWidth = '120px';
+    row1.appendChild(status);
+
+    const helpLine = document.createElement('div');
+    helpLine.style.marginTop = '4px';
+    helpLine.style.fontSize = '12px';
+    helpLine.style.color = '#666';
+    helpLine.textContent = CFG.ui.helpExample;
+
+    const lastScanLine = document.createElement('div');
+    lastScanLine.style.marginTop = '2px';
+    lastScanLine.style.fontSize = '12px';
+    lastScanLine.style.color = '#444';
+    lastScanLine.style.wordBreak = 'break-all';
+    lastScanLine.textContent = CFG.ui.showLastScan ? `${CFG.ui.lastScanLabel}: （未実行）` : '';
+
+    const reasonLine = document.createElement('div');
+    reasonLine.style.marginTop = '2px';
+    reasonLine.style.fontSize = '12px';
+    reasonLine.style.color = '#b00000';
+    reasonLine.style.wordBreak = 'break-all';
+    reasonLine.textContent = '';
+
+    wrap.appendChild(row1);
+    wrap.appendChild(helpLine);
+    if (CFG.ui.showLastScan) wrap.appendChild(lastScanLine);
+    if (CFG.ui.showReasons)  wrap.appendChild(reasonLine);
+    mount.appendChild(wrap);
+
+    clearBtn.addEventListener('click', () => {
+      input.value = '';
+      status.textContent = 'READY';
+      if (CFG.ui.showReasons)  reasonLine.textContent = '';
+      input.focus();
+    });
+
+    input.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter') return;
+      ev.preventDefault();
+
+      const rawInput = input.value;
+      const appRec = kintone.app.record.get();
+
+      // 表示直前に空行を掃除
+      if (appRec && appRec.record) {
+        pruneEmptyRowsOnRecord(appRec.record);
+        kintone.app.record.set(appRec);
+      }
+
+      // 解析（固定長）
+      const { parsed, parseErr } = parseFixedWidth(rawInput);
+      if (parseErr) {
+        status.textContent = 'NG';
+        if (CFG.ui.showReasons) reasonLine.textContent = `${CFG.ui.reasonsLabel}: ${parseErr}`;
+        if (CFG.ui.showLastScan) lastScanLine.textContent = `${CFG.ui.lastScanLabel}: ${truncate(rawInput, 200)}`;
+        // NGは入力を残す
+        if (CFG.ui.selectAllWhenKeeping) { try { input.setSelectionRange(0, input.value.length); } catch(e) {} }
+        input.focus();
+        return;
+      }
+
+      // 評価
+      const evalRes = evaluateAll(appRec.record, parsed);
+
+      // 転記
+      appendRow(appRec, parsed, evalRes);
+      kintone.app.record.set(appRec);
+
+      // ステータス/理由/最終SCAN
+      const combinedConfigError = evalRes.configError || parsed.configError;
+      const resultKind = combinedConfigError ? 'ERR' : (evalRes.ok ? 'OK' : 'NG');
+      status.textContent = combinedConfigError ? 'ERR (読み取り/設定)' : (evalRes.ok ? 'OK' : 'NG');
+
+      const reasonsText = [...(evalRes.reasons || []), ...(parsed.reasons || [])].filter(Boolean).join(' / ') || '';
+      if (CFG.ui.showReasons) reasonLine.textContent = reasonsText ? `${CFG.ui.reasonsLabel}: ${reasonsText}` : '';
+      if (CFG.ui.showLastScan) lastScanLine.textContent = `${CFG.ui.lastScanLabel}: ${truncate(parsed.raw, 200)}`;
+
+      // 入力のクリア方針
+      const shouldKeep = Array.isArray(CFG.ui.keepInputOnResults) && CFG.ui.keepInputOnResults.includes(resultKind);
+      if (shouldKeep) {
+        if (CFG.ui.selectAllWhenKeeping) { try { input.setSelectionRange(0, input.value.length); } catch(e) {} }
+      } else {
+        input.value = '';
+      }
+
+      input.focus();
+    });
+  }
+
+  // ===== イベント =====
+  kintone.events.on(['app.record.create.show', 'app.record.edit.show'], (event) => {
+    if (event && event.record) pruneEmptyRowsOnRecord(event.record);
+    buildScanUI();
+    return event;
+  });
+})();

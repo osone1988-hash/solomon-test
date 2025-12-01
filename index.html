@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>QR 読み取り JS 生成ツール</title>
+  <title>QR 読み取り JS 生成ツール（単純区切り型）</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     * { box-sizing: border-box; }
@@ -10,7 +10,7 @@
       margin: 0;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       background: #f5f7fb;
-      color: #222;
+      color: #111827;
     }
     header {
       background: #1f2933;
@@ -22,11 +22,11 @@
       font-size: 18px;
     }
     header small {
-      opacity: 0.8;
+      opacity: 0.85;
       font-size: 11px;
     }
     main {
-      max-width: 960px;
+      max-width: 1000px;
       margin: 16px auto 32px;
       padding: 0 12px;
     }
@@ -45,70 +45,22 @@
       margin-top: 0;
       font-size: 16px;
     }
-    .mode-buttons {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 8px 0 4px;
-    }
-    .mode-button {
-      flex: 1 1 150px;
-      padding: 8px 12px;
-      border-radius: 8px;
-      border: 1px solid #cbd2e1;
-      background: #fff;
-      cursor: pointer;
-      text-align: left;
-      transition: background 0.15s, border-color 0.15s, transform 0.05s;
-      font-size: 14px;
-    }
-    .mode-button strong {
-      display: block;
-      margin-bottom: 2px;
-    }
-    .mode-button span {
-      font-size: 12px;
-      color: #6b7280;
-    }
-    .mode-button.active {
-      border-color: #2563eb;
-      background: #eff6ff;
-    }
-    .mode-button:active {
-      transform: scale(0.98);
-    }
-    .pill {
-      display: inline-block;
-      padding: 2px 8px;
-      font-size: 11px;
-      border-radius: 999px;
-      background: #e5e7eb;
-      color: #374151;
-      margin-left: 6px;
-    }
-
-    .wizard {
-      display: none;
-    }
-    .wizard.active {
-      display: block;
-    }
 
     .field-row {
       display: flex;
       gap: 12px;
-      margin-bottom: 10px;
+      margin-bottom: 8px;
       flex-wrap: wrap;
     }
     .field-row label {
-      flex: 0 0 140px;
+      flex: 0 0 160px;
       font-size: 13px;
       color: #4b5563;
     }
     .field-row input,
     .field-row select,
     .field-row textarea {
-      flex: 1 1 200px;
+      flex: 1 1 240px;
       padding: 6px 8px;
       border-radius: 6px;
       border: 1px solid #d1d5db;
@@ -121,26 +73,16 @@
     }
     .hint {
       font-size: 11px;
-      color: #9ca3af;
-      margin: 2px 0 0 140px;
+      color: #6b7280;
+      margin: 0 0 6px 160px;
     }
 
     .actions {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin-top: 12px;
+      margin-top: 10px;
       margin-bottom: 4px;
-    }
-    button.primary {
-      background: #2563eb;
-      border: 1px solid #1d4ed8;
-      color: #fff;
-    }
-    button.outline {
-      background: #fff;
-      border: 1px solid #9ca3af;
-      color: #374151;
     }
     button.primary,
     button.outline {
@@ -152,20 +94,30 @@
       align-items: center;
       gap: 4px;
     }
+    button.primary {
+      background: #2563eb;
+      border: 1px solid #1d4ed8;
+      color: #fff;
+    }
+    button.outline {
+      background: #fff;
+      border: 1px solid #9ca3af;
+      color: #374151;
+    }
     button.primary:disabled,
     button.outline:disabled {
       opacity: 0.5;
       cursor: default;
     }
+
     .status-line {
       font-size: 12px;
       color: #4b5563;
       margin-top: 4px;
     }
-
     .code-output {
       width: 100%;
-      min-height: 180px;
+      min-height: 220px;
       font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
       font-size: 12px;
       padding: 8px;
@@ -177,15 +129,47 @@
       resize: vertical;
     }
 
+    .field-group {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-top: 8px;
+      background: #f9fafb;
+    }
+    .field-group-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #111827;
+    }
+    .field-group-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .mini-field {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 130px;
+    }
+    .mini-label {
+      font-size: 11px;
+      color: #6b7280;
+    }
+    .mini-field input,
+    .mini-field select {
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      font-size: 12px;
+    }
+
     @media (max-width: 640px) {
       .field-row label {
         flex: 0 0 100%;
         margin-bottom: 2px;
-      }
-      .field-row input,
-      .field-row select,
-      .field-row textarea {
-        flex: 1 1 100%;
       }
       .hint {
         margin-left: 0;
@@ -196,55 +180,67 @@
 <body>
   <header>
     <h1>
-      QR 読み取り JS 生成ツール
+      QR 読み取り JS 生成ツール（単純区切り型）
       <br />
-      <small>単純区切り型 / キー型 / 文字数型 の kintone 用 JavaScript をブラウザ上で生成</small>
+      <small>kintone 用の単純区切りスキャナJS（最大20項目・1項目最大5条件対応）をブラウザで生成</small>
     </h1>
   </header>
 
   <main>
-    <!-- モード選択 -->
-    <section class="card" id="mode-select-card">
-      <h2>1. 読み取り方式を選択</h2>
-      <div class="mode-buttons">
-        <button type="button" class="mode-button active" data-mode="simple">
-          <strong>単純区切り型</strong>
-          <span>「,」「|」などの区切り文字でトークンを分割</span>
-        </button>
-        <button type="button" class="mode-button" data-mode="key">
-          <strong>キー型</strong>
-          <span>product=TEST size=10 のような key=value 形式</span>
-        </button>
-        <button type="button" class="mode-button" data-mode="fixed">
-          <strong>文字数仕分け型</strong>
-          <span>固定長（4桁+3桁+16桁...）で順番に切り出し</span>
-        </button>
+    <section class="card">
+      <h2>1. 共通設定</h2>
+
+      <div class="field-row">
+        <label for="simple-space-id">SCAN スペースコード</label>
+        <input id="simple-space-id" type="text" value="scan_area" />
       </div>
-      <div class="status-line">
-        現在の方式: <span id="current-mode-label">単純区切り型</span>
+      <p class="hint">kintone のスペースフィールドコード。ここに SCAN 用のテキストボックスを表示します。</p>
+
+      <div class="field-row">
+        <label for="simple-delimiter">区切り文字 / 正規表現</label>
+        <input id="simple-delimiter" type="text" value="/\\s+/" />
+      </div>
+      <p class="hint">例: <code>/\s+/</code>（1つ以上の空白）, <code>,</code>, <code>\|</code> など。<br>先頭と末尾が <code>/</code> なら正規表現として扱います。</p>
+
+      <div class="field-row">
+        <label for="simple-field-count">項目数</label>
+        <input id="simple-field-count" type="number" min="1" max="20" value="5" />
+      </div>
+      <p class="hint">最大 20 まで。日時型で date + time の2トークンにしたい場合は、後で対象項目の「トークン数」を 2 にしてください。</p>
+
+      <div class="field-row">
+        <label for="simple-table-code">サブテーブル フィールドコード</label>
+        <input id="simple-table-code" type="text" value="scan_table" />
+      </div>
+
+      <div class="field-row">
+        <label for="simple-table-scanat">テーブル: SCAN日時</label>
+        <input id="simple-table-scanat" type="text" value="scan_at" />
+      </div>
+
+      <div class="field-row">
+        <label for="simple-table-result">テーブル: 結果(OK/NG/ERR)</label>
+        <input id="simple-table-result" type="text" value="result" />
+      </div>
+
+      <div class="field-row">
+        <label for="simple-table-reason">テーブル: 理由</label>
+        <input id="simple-table-reason" type="text" value="reason" />
       </div>
     </section>
 
-    <!-- 単純区切り型 -->
-    <section class="card wizard active" id="wizard-simple">
-      <h3>2. 単純区切り型の設定 <span class="pill">Simple</span></h3>
+    <section class="card">
+      <h2>2. 項目ごとの設定（論理フィールド定義）</h2>
+      <p style="font-size:12px;color:#4b5563;margin-top:0;margin-bottom:6px;">
+        各項目について、論理名・型・トークン数・テーブル転記先・判定用フィールドコードを設定します。<br>
+        まずは a〜e の5項目だけ使い、それ以外は空欄でも構いません。
+      </p>
 
-      <div class="field-row">
-        <label for="simple-delimiter">区切り文字</label>
-        <input id="simple-delimiter" type="text" maxlength="8" value="," />
-      </div>
-      <p class="hint">例: カンマ「,」、パイプ「|」、スペース「 」など。複数文字も指定可能です。</p>
+      <div id="simple-fields-container"></div>
+    </section>
 
-      <div class="field-row">
-        <label for="simple-token-count">トークン数</label>
-        <input id="simple-token-count" type="number" min="1" max="20" value="5" />
-      </div>
-      <p class="hint">QR 内の項目数（最大 20 まで）。</p>
-
-      <div class="field-row">
-        <label for="simple-memo">メモ（任意）</label>
-        <textarea id="simple-memo" placeholder="この設定の用途などをメモできます"></textarea>
-      </div>
+    <section class="card">
+      <h2>3. JS 生成 & ダウンロード</h2>
 
       <div class="actions">
         <button type="button" class="primary" id="simple-generate-btn">JSコードを生成</button>
@@ -252,68 +248,6 @@
       </div>
       <div class="status-line" id="simple-status">まだ生成されていません。</div>
       <textarea id="simple-code-output" class="code-output" spellcheck="false" placeholder="// ここに生成されたJSコードが表示されます"></textarea>
-    </section>
-
-    <!-- キー型 -->
-    <section class="card wizard" id="wizard-key">
-      <h3>2. キー型の設定 <span class="pill">Key / Mapping</span></h3>
-
-      <div class="field-row">
-        <label for="key-separator">ペアの区切り（項目の区切り）</label>
-        <input id="key-separator" type="text" maxlength="8" value=" " />
-      </div>
-      <p class="hint">例: 半角スペース「 」, 「&」, 改行など（複数文字OK）。</p>
-
-      <div class="field-row">
-        <label for="key-assign-operator">キーと値のつなぎ</label>
-        <input id="key-assign-operator" type="text" maxlength="4" value="=" />
-      </div>
-      <p class="hint">例: 「=」「:」「=>」など。</p>
-
-      <div class="field-row">
-        <label for="key-mapping-json">キー → フィールド対応</label>
-        <textarea id="key-mapping-json" placeholder='{
-  "product": { "target": "a", "type": "text" },
-  "qty": { "target": "b", "type": "number" }
-}'></textarea>
-      </div>
-      <p class="hint">JSON形式。type は text / number / datetime / date / time。</p>
-
-      <div class="actions">
-        <button type="button" class="primary" id="key-generate-btn">JSコードを生成</button>
-        <button type="button" class="outline" id="key-download-btn" disabled>JSファイルをダウンロード</button>
-      </div>
-      <div class="status-line" id="key-status">まだ生成されていません。</div>
-      <textarea id="key-code-output" class="code-output" spellcheck="false" placeholder="// ここに生成されたJSコードが表示されます"></textarea>
-    </section>
-
-    <!-- 文字数仕分け型 -->
-    <section class="card wizard" id="wizard-fixed">
-      <h3>2. 文字数仕分け型の設定 <span class="pill">Fixed width</span></h3>
-
-      <div class="field-row">
-        <label for="fixed-schema">スキーマ定義</label>
-        <textarea id="fixed-schema" placeholder='[
-  { "target": "a", "type": "text",     "length": 4  },
-  { "target": "b", "type": "number",   "length": 3  },
-  { "target": "c", "type": "datetime", "length": 16 },
-  { "target": "d", "type": "date",     "length": 10 },
-  { "target": "e", "type": "time",     "length": 5  }
-]'></textarea>
-      </div>
-      <p class="hint">JSON形式。length は各項目の文字数。最後の項目だけ可変長にしたい場合は後で拡張予定。</p>
-
-      <div class="field-row">
-        <label for="fixed-memo">メモ（任意）</label>
-        <textarea id="fixed-memo" placeholder="この設定の用途などをメモできます"></textarea>
-      </div>
-
-      <div class="actions">
-        <button type="button" class="primary" id="fixed-generate-btn">JSコードを生成</button>
-        <button type="button" class="outline" id="fixed-download-btn" disabled>JSファイルをダウンロード</button>
-      </div>
-      <div class="status-line" id="fixed-status">まだ生成されていません。</div>
-      <textarea id="fixed-code-output" class="code-output" spellcheck="false" placeholder="// ここに生成されたJSコードが表示されます"></textarea>
     </section>
   </main>
 

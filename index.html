@@ -200,13 +200,19 @@
         <label for="simple-delimiter">区切り文字 / 正規表現</label>
         <input id="simple-delimiter" type="text" value="/\\s+/" />
       </div>
-      <p class="hint">例: <code>/\s+/</code>（1つ以上の空白）, <code>,</code>, <code>\|</code> など。<br>先頭と末尾が <code>/</code> なら正規表現として扱います。</p>
+      <p class="hint">
+        例: <code>/\s+/</code>（1つ以上の空白）, <code>,</code>, <code>\|</code> など。<br />
+        先頭と末尾が <code>/</code> なら正規表現として扱います。
+      </p>
 
       <div class="field-row">
         <label for="simple-field-count">項目数</label>
         <input id="simple-field-count" type="number" min="1" max="20" value="5" />
       </div>
-      <p class="hint">最大 20 まで。日時型で date + time の2トークンにしたい場合は、後で対象項目の「トークン数」を 2 にしてください。</p>
+      <p class="hint">
+        最大 20 まで。<br />
+        型が「日時」の項目は自動的に 2 トークン（DATE + TIME）、それ以外は自動的に 1 トークンとして扱います。
+      </p>
 
       <div class="field-row">
         <label for="simple-table-code">サブテーブル フィールドコード</label>
@@ -232,8 +238,8 @@
     <section class="card">
       <h2>2. 項目ごとの設定（論理フィールド定義）</h2>
       <p style="font-size:12px;color:#4b5563;margin-top:0;margin-bottom:6px;">
-        各項目について、論理名・型・トークン数・テーブル転記先・判定用フィールドコードを設定します。<br>
-        まずは a〜e の5項目だけ使い、それ以外は空欄でも構いません。
+        各項目について、論理名・型・テーブル転記先・判定用フィールドコードを設定します。<br />
+        型は kintone のフィールド種別に合わせて選択してください。ドロップダウン / ラジオボタン / チェックボックスは内部的には「文字列(1行)」として扱います。
       </p>
 
       <div id="simple-fields-container"></div>

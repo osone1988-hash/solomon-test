@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>QR 読み取り JS 生成ツール（キー型）</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f7fb;
+      color: #111827;
+    }
+    header {
+      background: #1f2933;
+      color: #fff;
+      padding: 12px 20px;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+    }
+    header small {
+      opacity: 0.85;
+      font-size: 11px;
+    }
+    main {
+      max-width: 1000px;
+      margin: 16px auto 32px;
+      padding: 0 12px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(15,23,42,0.08);
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+    h2 {
+      margin-top: 0;
+      font-size: 18px;
+    }
+    .field-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 8px;
+      flex-wrap: wrap;
+    }
+    .field-row label {
+      flex: 0 0 180px;
+      font-size: 13px;
+      color: #4b5563;
+    }
+    .field-row input,
+    .field-row select {
+      flex: 1 1 240px;
+      padding: 6px 8px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      font-size: 13px;
+    }
+    .hint {
+      font-size: 11px;
+      color: #6b7280;
+      margin: 0 0 6px 180px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+      margin-bottom: 4px;
+    }
+    button.primary,
+    button.outline {
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    button.primary {
+      background: #2563eb;
+      border: 1px solid #1d4ed8;
+      color: #fff;
+    }
+    button.outline {
+      background: #fff;
+      border: 1px solid #9ca3af;
+      color: #374151;
+    }
+    button.primary:disabled,
+    button.outline:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    .status-line {
+      font-size: 12px;
+      color: #4b5563;
+      margin-top: 4px;
+    }
+    .code-output {
+      width: 100%;
+      min-height: 220px;
+      font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      font-size: 12px;
+      padding: 8px;
+      border-radius: 8px;
+      border: 1px solid #d1d5db;
+      background: #0b1120;
+      color: #e5e7eb;
+      margin-top: 8px;
+      resize: vertical;
+    }
+
+    .field-group {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-top: 8px;
+      background: #f9fafb;
+    }
+    .field-group-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #111827;
+    }
+    .field-group-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+    }
+    .mini-field {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 150px;
+    }
+    .mini-label {
+      font-size: 11px;
+      color: #6b7280;
+    }
+    .mini-field input,
+    .mini-field select {
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid #d1d5db;
+      font-size: 12px;
+    }
+
+    @media (max-width: 640px) {
+      .field-row label {
+        flex: 0 0 100%;
+        margin-bottom: 2px;
+      }
+      .hint {
+        margin-left: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>
+      QR 読み取り JS 生成ツール（キー型）
+      <br />
+      <small>key=value 型の QR を kintone に取り込む JS をブラウザで生成</small>
+    </h1>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1. 共通設定</h2>
+
+      <div class="field-row">
+        <label for="kv-space-id">SCAN スペースコード</label>
+        <input id="kv-space-id" type="text" value="scan_area" />
+      </div>
+      <p class="hint">kintone のスペースフィールドコード。ここに SCAN 用のテキストボックスを表示します。</p>
+
+      <div class="field-row">
+        <label for="kv-pair-delimiter">ペア区切り文字</label>
+        <input id="kv-pair-delimiter" type="text" value=";" />
+      </div>
+      <p class="hint">
+        例: <code>;</code>, <code>&amp;</code>, 改行のみで区切る場合は空欄にして「改行」を選択します。
+      </p>
+
+      <div class="field-row">
+        <label for="kv-pair-delimiter-mode">ペア区切りモード</label>
+        <select id="kv-pair-delimiter-mode">
+          <option value="char" selected>文字（上の1文字で区切る）</option>
+          <option value="newline">改行で区切る</option>
+        </select>
+      </div>
+
+      <div class="field-row">
+        <label for="kv-assign-op">キーと値の区切り</label>
+        <select id="kv-assign-op">
+          <option value="=" selected>=</option>
+          <option value=":">:</option>
+          <option value="=>">=></option>
+        </select>
+      </div>
+      <p class="hint">例: <code>PRODUCT=TEST</code>, <code>SIZE:10</code>, <code>KEY=&gt;VALUE</code> など。</p>
+
+      <div class="field-row">
+        <label for="kv-field-count">項目数（論理フィールド数）</label>
+        <input id="kv-field-count" type="number" min="1" max="20" value="5" />
+      </div>
+      <p class="hint">最大 20 まで。キーの種類が 5つなら「5」、7つなら「7」のように設定します。</p>
+
+      <div class="field-row">
+        <label for="kv-table-code">サブテーブル フィールドコード</label>
+        <input id="kv-table-code" type="text" value="scan_table" />
+      </div>
+
+      <div class="field-row">
+        <label for="kv-table-scanat">テーブル: SCAN日時</label>
+        <input id="kv-table-scanat" type="text" value="scan_at" />
+      </div>
+
+      <div class="field-row">
+        <label for="kv-table-result">テーブル: 結果(OK/NG/ERR)</label>
+        <input id="kv-table-result" type="text" value="result" />
+      </div>
+
+      <div class="field-row">
+        <label for="kv-table-reason">テーブル: 理由</label>
+        <input id="kv-table-reason" type="text" value="reason" />
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. キーごとの設定（key → 論理フィールド）</h2>
+      <p style="font-size:12px;color:#4b5563;margin-top:0;margin-bottom:6px;">
+        QR に含まれるキーごとに、キー文字列・論理名・型・テーブル転記先・判定用フィールドコードを設定します。<br />
+        型は「文字列（1行・選択型）／数値／日付／時刻／日時」から選択します。<br />
+        日時は「日付＋時刻」を1ペア分の値として扱います（例: <code>DT=2025-11-14 12:00</code> など）。
+      </p>
+
+      <div id="kv-fields-container"></div>
+    </section>
+
+    <section class="card">
+      <h2>3. JS 生成 & ダウンロード</h2>
+
+      <div class="actions">
+        <button type="button" class="primary" id="kv-generate-btn">JSコードを生成</button>
+        <button type="button" class="outline" id="kv-download-btn" disabled>JSファイルをダウンロード</button>
+      </div>
+      <div class="status-line" id="kv-status">まだ生成されていません。</div>
+      <textarea id="kv-code-output" class="code-output" spellcheck="false" placeholder="// ここに生成されたキー型スキャナのJSコードが表示されます"></textarea>
+    </section>
+  </main>
+
+  <script src="app-kv.js"></script>
+</body>
+</html>

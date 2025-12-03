@@ -1,15 +1,12 @@
 // app-fw.js
-// 文字数区切り型（固定長） QR 読み取り JS 生成ツール
-// - 1行の QR 文字列を左から順に「文字数」で区切る
-// - 各項目は「型 + 文字数 + 判定フィールド（最大5条件）」で定義
-// - 生成される JS は単純区切り型・キー型と同じ評価ロジックを使用
+// 文字数区切り（固定長）型 QR 読み取り JS 生成ツール
+// - ユーザーが文字数・型・フィールドコードを設定
+// - 「1項目=最大5条件」対応の固定長スキャナJSを生成し、ダウンロード可能
 
 (function () {
   'use strict';
 
-  function $(sel) {
-    return document.querySelector(sel);
-  }
+  function $(sel) { return document.querySelector(sel); }
 
   function downloadJs(filename, source) {
     if (!source || !source.trim()) {
@@ -27,29 +24,26 @@
     URL.revokeObjectURL(url);
   }
 
-  // ---- 項目UI ----
+  // ---- フィールド設定 UI ----
   function setupFwFieldsUI() {
     const fieldCountInput = $('#fw-field-count');
     const container = $('#fw-fields-container');
 
-    // サンプル用プリセット（a〜e）
+    // a〜e 用サンプル（4,3,16,10,5 文字）
     const presets = {
-      1: { name: 'a', label: 'a', uiType: 'text',     length: 4,  tableField: 'at', value1: 'a',  op1: 'aj',  value2: 'a2', op2: 'aj2', join1: 'as1' },
-      2: { name: 'b', label: 'b', uiType: 'number',   length: 3,  tableField: 'bt', value1: 'b',  op1: 'bj',  value2: 'b2', op2: 'bj2', join1: 'bs1' },
-      3: { name: 'c', label: 'c', uiType: 'datetime', length: 16, tableField: 'ct', value1: 'c',  op1: 'cj',  value2: 'c2', op2: 'cj2', join1: 'cs1' },
-      4: { name: 'd', label: 'd', uiType: 'date',     length: 10, tableField: 'dt', value1: 'd',  op1: 'dj',  value2: 'd2', op2: 'dj2', join1: 'ds1' },
-      5: { name: 'e', label: 'e', uiType: 'time',     length: 5,  tableField: 'et', value1: 'e',  op1: 'ej',  value2: 'e2', op2: 'ej2', join1: 'es1' }
+      1: { name: 'a', label: 'a', type: 'text',     width: 4,  tableField: 'at', value1: 'a',  op1: 'aj',  value2: 'a2', op2: 'aj2', join1: 'as1' },
+      2: { name: 'b', label: 'b', type: 'number',   width: 3,  tableField: 'bt', value1: 'b',  op1: 'bj',  value2: 'b2', op2: 'bj2', join1: 'bs1' },
+      3: { name: 'c', label: 'c', type: 'datetime', width: 16, tableField: 'ct', value1: 'c',  op1: 'cj',  value2: 'c2', op2: 'cj2', join1: 'cs1' },
+      4: { name: 'd', label: 'd', type: 'date',     width: 10, tableField: 'dt', value1: 'd',  op1: 'dj',  value2: 'd2', op2: 'dj2', join1: 'ds1' },
+      5: { name: 'e', label: 'e', type: 'time',     width: 5,  tableField: 'et', value1: 'e',  op1: 'ej',  value2: 'e2', op2: 'ej2', join1: 'es1' }
     };
 
     const TYPE_OPTIONS = [
-      { value: 'text',      label: '文字列 (1行)' },
-      { value: 'number',    label: '数値' },
-      { value: 'datetime',  label: '日時' },
-      { value: 'date',      label: '日付' },
-      { value: 'time',      label: '時刻' },
-      { value: 'dropdown',  label: 'ドロップダウン' },
-      { value: 'radio',     label: 'ラジオボタン' },
-      { value: 'checkbox',  label: 'チェックボックス' }
+      { value: 'text',     label: '文字列 (1行・選択型)' },
+      { value: 'number',   label: '数値' },
+      { value: 'datetime', label: '日時' },
+      { value: 'date',     label: '日付' },
+      { value: 'time',     label: '時刻' }
     ];
 
     function renderFields() {
@@ -106,10 +100,10 @@
         fType.className = 'mini-field';
         const lblType = document.createElement('span');
         lblType.className = 'mini-label';
-        lblType.textContent = '型（kintone フィールド種別）';
+        lblType.textContent = '型（kintone フィールド型）';
         const selType = document.createElement('select');
         selType.id = 'fw-field-' + i + '-type';
-        const presetType = preset.uiType || 'text';
+        const presetType = preset.type || 'text';
         TYPE_OPTIONS.forEach((optDef) => {
           const opt = document.createElement('option');
           opt.value = optDef.value;
@@ -122,20 +116,20 @@
         grid1.appendChild(fType);
 
         // 文字数
-        const fLen = document.createElement('div');
-        fLen.className = 'mini-field';
-        const lblLen = document.createElement('span');
-        lblLen.className = 'mini-label';
-        lblLen.textContent = '文字数';
-        const inputLen = document.createElement('input');
-        inputLen.type = 'number';
-        inputLen.min = '0';
-        inputLen.max = '200';
-        inputLen.id = 'fw-field-' + i + '-length';
-        inputLen.value = preset.length != null ? String(preset.length) : '0';
-        fLen.appendChild(lblLen);
-        fLen.appendChild(inputLen);
-        grid1.appendChild(fLen);
+        const fWidth = document.createElement('div');
+        fWidth.className = 'mini-field';
+        const lblWidth = document.createElement('span');
+        lblWidth.className = 'mini-label';
+        lblWidth.textContent = '文字数';
+        const inputWidth = document.createElement('input');
+        inputWidth.type = 'number';
+        inputWidth.min = '1';
+        inputWidth.max = '100';
+        inputWidth.id = 'fw-field-' + i + '-width';
+        inputWidth.value = preset.width != null ? String(preset.width) : '1';
+        fWidth.appendChild(lblWidth);
+        fWidth.appendChild(inputWidth);
+        grid1.appendChild(fWidth);
 
         // テーブル転記先
         const fTable = document.createElement('div');
@@ -153,7 +147,7 @@
 
         group.appendChild(grid1);
 
-        // 判定フィールド
+        // 判定フィールド（2条件分）
         const subTitle = document.createElement('div');
         subTitle.style.marginTop = '6px';
         subTitle.style.fontSize = '12px';
@@ -194,11 +188,11 @@
     renderFields();
   }
 
-  // ---- JS 生成 ----
+  // ---- JS生成（固定長エンジン） ----
   function buildFwJs(config) {
     const header = [
       '// Generated by QR Config Tool',
-      '// Mode: fixed-width (flex fields, max 20 fields, each up to 5 conditions)',
+      '// Mode: fixed-width (max 20 fields, each up to 5 conditions)',
       '// Generated at: ' + new Date().toISOString(),
       ''
     ].join('\n');
@@ -209,7 +203,7 @@
         '        name: ' + JSON.stringify(f.name) + ',',
         '        label: ' + JSON.stringify(f.label) + ',',
         '        type: ' + JSON.stringify(f.type) + ',',
-        '        length: ' + f.length + ',',
+        '        width: ' + f.width + ',',
         '        tableField: ' + JSON.stringify(f.tableField) + ',',
         '        judge: {',
         '          valueFields: ' + JSON.stringify(f.judge.valueFields) + ',',
@@ -239,7 +233,7 @@
       ''
     ].join('\n');
 
-    const engine = String.raw`
+    const engine = `
   const val = (rec, code) => (code && rec[code] ? rec[code].value : '');
   const nz  = (s) => String(s === undefined || s === null ? '' : s).trim() !== '';
 
@@ -249,10 +243,10 @@
     if (!hhmmOrHHmm) return null;
     const s = String(hhmmOrHHmm);
     let h, m;
-    if (/^\d{2}:\d{2}$/.test(s)) {
+    if (/^\\d{2}:\\d{2}$/.test(s)) {
       h = Number(s.slice(0, 2));
       m = Number(s.slice(3, 5));
-    } else if (/^\d{4}$/.test(s)) {
+    } else if (/^\\d{4}$/.test(s)) {
       h = Number(s.slice(0, 2));
       m = Number(s.slice(2, 4));
     } else {
@@ -285,7 +279,7 @@
     return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
   }
 
-  // ===== 判定関数 =====
+  // ===== 判定関数（単一条件） =====
   function judgeText(scan, base, op, label) {
     const specified = !!op && op !== '指定なし';
     if (!specified || base === null || base === undefined || base === '') {
@@ -530,115 +524,111 @@
   // ===== 固定長 SCAN パース =====
   function parseScan(raw) {
     const text = String(raw || '');
-    if (!text) throw new Error('SCAN が空です');
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('SCAN が空です');
 
     const fields = CFG.fields || [];
-    let requiredLength = 0;
+    let minLen = 0;
     for (let i = 0; i < fields.length; i++) {
-      const f = fields[i];
-      const len = Number(f.length || 0);
-      if (len > 0) requiredLength += len;
+      const w = fields[i].width || 0;
+      minLen += w;
+    }
+    if (text.length < minLen) {
+      throw new Error('SCAN 文字列が短すぎます（必要:' + minLen + '文字 / 実際:' + text.length + '文字）');
     }
 
-    const actualLength = text.length;
-    if (actualLength !== requiredLength) {
-      throw new Error('SCAN 文字数が一致しません（必要:' + requiredLength + '桁 / 実際:' + actualLength + '桁）');
-    }
-
-    let idx = 0;
-    const values = {};
+    let pos = 0;
+    const parsed = {
+      raw: text,
+      values: {}
+    };
 
     for (let i = 0; i < fields.length; i++) {
-      const f = fields[i];
-      const segLen = Number(f.length || 0);
-      let info = {};
+      const field = fields[i];
+      const w = field.width || 0;
+      const slice = text.slice(pos, pos + w);
+      pos += w;
 
-      if (segLen > 0) {
-        const rawSeg = text.slice(idx, idx + segLen);
-        idx += segLen;
-        const seg = rawSeg.trim();
-        info.raw = seg;
+      const info = {};
+      const name = field.name;
+      const v = slice;
+      const t = v.trim();
 
-        switch (f.type) {
-          case 'text':
-            info.text = seg;
-            break;
-          case 'number': {
-            const num = Number(seg);
-            if (Number.isNaN(num)) {
-              throw new Error('数値フィールド "' + f.label + '" の値が不正です: ' + seg);
-            }
-            info.number = num;
-            break;
+      switch (field.type) {
+        case 'text':
+          info.text = t;
+          break;
+        case 'number': {
+          const num = Number(t);
+          if (Number.isNaN(num)) {
+            throw new Error('数値フィールド "' + name + '" の値が不正です: ' + t);
           }
-          case 'date': {
-            const v = seg;
-            let dStr = v;
-            if (/^\d{8}$/.test(v)) {
-              dStr = v.slice(0, 4) + '-' + v.slice(4, 6) + '-' + v.slice(6, 8);
-            }
-            if (!/^\d{4}-\d{2}-\d{2}$/.test(dStr)) {
-              throw new Error('日付フィールド "' + f.label + '" の値が不正です: ' + v);
-            }
-            info.date = dStr;
-            break;
-          }
-          case 'time': {
-            let t = seg;
-            if (/^\d{4}$/.test(t)) {
-              t = t.slice(0, 2) + ':' + t.slice(2, 4);
-            }
-            if (!/^\d{2}:\d{2}$/.test(t)) {
-              throw new Error('時刻フィールド "' + f.label + '" の値が不正です: ' + t);
-            }
-            const min = parseTimeToMin(t);
-            if (min === null) {
-              throw new Error('時刻フィールド "' + f.label + '" の値が不正です: ' + t);
-            }
-            info.time = t;
-            info.minutes = min;
-            break;
-          }
-          case 'datetime': {
-            const v = seg;
-            let dateStr, timeStr;
-            if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(v)) {
-              dateStr = v.slice(0, 10);
-              timeStr = v.slice(11, 16);
-            } else if (/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/.test(v)) {
-              dateStr = v.slice(0, 10).replace(/\//g, '-');
-              timeStr = v.slice(11, 16);
-            } else if (/^[0-9]{12}$/.test(v)) {
-              dateStr = v.slice(0, 4) + '-' + v.slice(4, 6) + '-' + v.slice(6, 8);
-              timeStr = v.slice(8, 10) + ':' + v.slice(10, 12);
-            } else {
-              throw new Error('日時フィールド "' + f.label + '" の値が不正です: ' + v);
-            }
-            const iso = toIsoFromDateTimeParts(dateStr, timeStr);
-            if (!iso) {
-              throw new Error('日時フィールド "' + f.label + '" の値が不正です: ' + v);
-            }
-            info.datetimeIso = iso;
-            info.date = dateStr;
-            info.time = timeStr;
-            info.minutes = parseTimeToMin(timeStr);
-            break;
-          }
-          default:
-            // 未知typeは raw のまま
-            break;
+          info.number = num;
+          break;
         }
+        case 'date': {
+          let d = t;
+          if (/^\d{4}\/\d{2}\/\d{2}$/.test(d)) {
+            d = d.replace(/\//g, '-');
+          }
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+            throw new Error('日付フィールド "' + name + '" の値が不正です: ' + t);
+          }
+          info.date = d;
+          break;
+        }
+        case 'time': {
+          let tm = t;
+          if (/^\d{4}$/.test(tm)) {
+            tm = tm.slice(0, 2) + ':' + tm.slice(2, 4);
+          }
+          if (!/^\d{2}:\d{2}$/.test(tm)) {
+            throw new Error('時刻フィールド "' + name + '" の値が不正です: ' + t);
+          }
+          const min = parseTimeToMin(tm);
+          if (min === null) {
+            throw new Error('時刻フィールド "' + name + '" の値が不正です: ' + t);
+          }
+          info.time = tm;
+          info.minutes = min;
+          break;
+        }
+        case 'datetime': {
+          let dateStr, timeStr;
+          const dv = t;
+          if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dv)) {
+            dateStr = dv.slice(0, 10);
+            timeStr = dv.slice(11, 16);
+          } else if (/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/.test(dv)) {
+            dateStr = dv.slice(0, 10).replace(/\//g, '-');
+            timeStr = dv.slice(11, 16);
+          } else if (/^[0-9]{12}$/.test(dv)) {
+            dateStr = dv.slice(0, 4) + '-' + dv.slice(4, 6) + '-' + dv.slice(6, 8);
+            timeStr = dv.slice(8, 10) + ':' + dv.slice(10, 12);
+          } else {
+            throw new Error('日時フィールド "' + name + '" の値が不正です: ' + dv);
+          }
+          const iso = toIsoFromDateTimeParts(dateStr, timeStr);
+          if (!iso) {
+            throw new Error('日時フィールド "' + name + '" の値が不正です: ' + dv);
+          }
+          info.datetimeIso = iso;
+          info.date = dateStr;
+          info.time = timeStr;
+          info.minutes = parseTimeToMin(timeStr);
+          break;
+        }
+        default:
+          info.raw = t;
       }
 
-      values[f.name] = info;
+      parsed.values[name] = info;
     }
 
-    return {
-      raw: text,
-      values: values
-    };
+    return parsed;
   }
 
+  // ===== サブテーブル転記 =====
   function kintoneCellTypeFromFieldType(fieldType) {
     switch (fieldType) {
       case 'number':   return 'NUMBER';
@@ -669,12 +659,38 @@
     }
   }
 
+  function isEmptyRow(rowValue) {
+    if (!rowValue) return true;
+    const keys = Object.keys(rowValue);
+    if (!keys.length) return true;
+    for (let i = 0; i < keys.length; i++) {
+      const cell = rowValue[keys[i]];
+      if (!cell) continue;
+      const v = cell.value;
+      if (Array.isArray(v)) {
+        if (v.length > 0) return false;
+      } else {
+        if (v !== '' && v !== null && v !== undefined) return false;
+      }
+    }
+    return true;
+  }
+
   function appendRow(appRec, parsed, evalRes) {
     const rec = appRec.record;
     const tblCfg = CFG.table;
 
     if (!rec[tblCfg.code]) rec[tblCfg.code] = { type: 'SUBTABLE', value: [] };
     const table = rec[tblCfg.code];
+
+    // 先に「全て空の行」を削除（初期行の空欄を消す）
+    if (Array.isArray(table.value)) {
+      table.value = table.value.filter(function (row) {
+        return !isEmptyRow(row.value);
+      });
+    } else {
+      table.value = [];
+    }
 
     const row = { value: {} };
 
@@ -703,6 +719,7 @@
     table.value.push(row);
   }
 
+  // ===== UI描画 =====
   function buildScanUI() {
     const space = kintone.app.record.getSpaceElement(CFG.spaceId);
     let mount = space;
@@ -740,7 +757,7 @@
     row2.style.marginTop = '4px';
     row2.style.fontSize = '12px';
     row2.style.color = '#666';
-    row2.textContent = '固定長文字列を入力して Enter';
+    row2.textContent = '固定長のSCAN文字列を入力して Enter';
 
     wrap.appendChild(row1);
     wrap.appendChild(row2);
@@ -756,12 +773,14 @@
       if (ev.key !== 'Enter') return;
       ev.preventDefault();
 
+      const raw = input.value;
       const appRec = kintone.app.record.get();
       let parsed;
       try {
-        parsed = parseScan(input.value);
+        parsed = parseScan(raw);
       } catch (e) {
         status.textContent = 'NG: ' + e.message;
+        // パースエラー時も SCAN は残す
         return;
       }
 
@@ -771,11 +790,18 @@
 
       if (evalRes.configError) {
         status.textContent = 'ERR (設定エラー)';
+        // ERR のときは SCAN を残す
+        input.value = raw;
+      } else if (!evalRes.ok) {
+        status.textContent = 'NG';
+        // NG のときも SCAN を残す
+        input.value = raw;
       } else {
-        status.textContent = evalRes.ok ? 'OK' : 'NG';
+        status.textContent = 'OK';
+        // OK のときだけ SCAN をクリア
+        input.value = '';
       }
 
-      input.value = '';
       input.focus();
     });
   }
@@ -786,12 +812,13 @@
       return event;
     });
   }
+
 })();`;
 
     return header + '\n' + cfgBlock + engine + '\n';
   }
 
-  // ---- ウィザード ----
+  // ---- ウィザードのセットアップ ----
   function setupFwWizard() {
     const spaceIdInput     = $('#fw-space-id');
     const fieldCountInput  = $('#fw-field-count');
@@ -818,8 +845,8 @@
       for (let i = 1; i <= fieldCount; i++) {
         let name  = ($('#fw-field-' + i + '-name').value || '').trim();
         let label = ($('#fw-field-' + i + '-label').value || '').trim();
-        const uiType = ($('#fw-field-' + i + '-type').value || 'text').trim();
-        const lenStr = ($('#fw-field-' + i + '-length').value || '').trim();
+        const type = ($('#fw-field-' + i + '-type').value || 'text').trim();
+        let width = parseInt($('#fw-field-' + i + '-width').value, 10);
         const tableField = ($('#fw-field-' + i + '-tableField').value || '').trim();
         const value1 = ($('#fw-field-' + i + '-value1').value || '').trim();
         const op1    = ($('#fw-field-' + i + '-op1').value || '').trim();
@@ -829,27 +856,13 @@
 
         if (!name) name = 'f' + i;
         if (!label) label = name;
-
-        let internalType;
-        switch (uiType) {
-          case 'number':
-          case 'datetime':
-          case 'date':
-          case 'time':
-            internalType = uiType;
-            break;
-          default:
-            internalType = 'text'; // text / dropdown / radio / checkbox → text扱い
-        }
-
-        let length = parseInt(lenStr, 10);
-        if (Number.isNaN(length) || length < 0) length = 0;
+        if (Number.isNaN(width) || width < 1) width = 1;
 
         fields.push({
           name: name,
           label: label,
-          type: internalType,
-          length: length,
+          type: type,
+          width: width,
           tableField: tableField,
           judge: {
             valueFields: [value1, value2, '', '', ''],

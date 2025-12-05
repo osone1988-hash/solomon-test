@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>QR SCAN JS ジェネレーター – トップ</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #f3f4f6;
+      --card-bg: #ffffff;
+      --border: #e5e7eb;
+      --text-main: #111827;
+      --text-sub: #4b5563;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --radius-lg: 12px;
+      --radius-md: 8px;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 10px 25px rgba(15, 23, 42, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      background: radial-gradient(circle at top, #e5f0ff, #f9fafb 50%, #eef2ff);
+      color: var(--text-main);
+    }
+
+    .page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      padding: 24px 16px 16px;
+    }
+
+    .header-inner {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .title {
+      font-size: 24px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin: 0 0 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .title-badge {
+      font-size: 11px;
+      color: #1e293b;
+      background: #e0f2fe;
+      border-radius: 999px;
+      padding: 3px 10px;
+    }
+
+    .subtitle {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-sub);
+    }
+
+    .main {
+      flex: 1;
+      padding: 8px 16px 32px;
+    }
+
+    .main-inner {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .notice {
+      margin: 0 0 16px;
+      padding: 10px 12px;
+      border-radius: var(--radius-md);
+      border: 1px dashed #bfdbfe;
+      background: #eff6ff;
+      font-size: 12px;
+      color: #1d4ed8;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--card-bg);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-md);
+      padding: 18px 18px 16px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .card-tag {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: #f3f4ff;
+      color: #4338ca;
+    }
+
+    .card-title {
+      margin: 0 0 6px;
+      font-size: 18px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-title span.icon {
+      font-size: 18px;
+    }
+
+    .card-desc {
+      margin: 0 0 10px;
+      font-size: 13px;
+      color: var(--text-sub);
+      line-height: 1.5;
+    }
+
+    .card-list {
+      margin: 0 0 12px;
+      padding-left: 18px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .card-list li {
+      margin: 2px 0;
+    }
+
+    .card-footer {
+      margin-top: auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      color: white;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      border-radius: 999px;
+      text-decoration: none;
+      box-shadow: var(--shadow-sm);
+      border: none;
+      cursor: pointer;
+      transition: transform 0.05s ease, box-shadow 0.05s ease,
+        background 0.1s ease;
+      white-space: nowrap;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 8px 18px rgba(37, 99, 235, 0.26);
+    }
+
+    .btn-primary:active {
+      transform: translateY(0);
+      box-shadow: var(--shadow-sm);
+    }
+
+    .btn-primary span.arrow {
+      font-size: 14px;
+    }
+
+    .card-hint {
+      font-size: 11px;
+      color: #9ca3af;
+      text-align: right;
+      flex: 1;
+    }
+
+    .footer {
+      padding: 12px 16px 18px;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
+    .footer-inner {
+      max-width: 980px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 640px) {
+      .title {
+        font-size: 20px;
+        flex-wrap: wrap;
+      }
+      .subtitle {
+        font-size: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="header">
+      <div class="header-inner">
+        <h1 class="title">
+          QR SCAN JS ジェネレーター
+          <span class="title-badge">設定ウィザード</span>
+        </h1>
+        <p class="subtitle">
+          kintone のフィールドコードを入力するだけで、QRコード読み取り用の JS
+          を自動生成するツールです。
+        </p>
+      </div>
+    </header>
+
+    <main class="main">
+      <div class="main-inner">
+        <p class="notice">
+          ▼ まずは使用したい QR 文字列の形式を選択してください。<br />
+          （各ボタンのリンク先 URL は、実際に運用中のページのパスに書き換えてください）
+        </p>
+
+        <section class="grid">
+          <!-- 単純区切り型 -->
+          <article class="card">
+            <div class="card-tag">方式 A</div>
+            <h2 class="card-title">
+              <span class="icon">🔹</span>
+              単純区切り型
+            </h2>
+            <p class="card-desc">
+              1つの SCAN 文字列を区切り文字で分割し、
+              トークン順に a / b / c / d / e を読み取る方式です。
+            </p>
+            <ul class="card-list">
+              <li>例）<code>TEST 10 2025-11-14 00:00</code></li>
+              <li>区切り文字はスペース以外にも設定可能</li>
+              <li>フィールド条件（最大2条件※内部は5条件対応）で OK/NG 判定</li>
+            </ul>
+            <div class="card-footer">
+              <!-- ▼▼ ここを現在の「単純区切り型ジェネレーター」の URL に変更してください ▼▼ -->
+              <a href="pc-simple.html" class="btn-primary">
+                この方式の設定画面へ
+                <span class="arrow">›</span>
+              </a>
+              <div class="card-hint">
+                href="pc-simple.html" を<br />実運用ページのパスに変更してください
+              </div>
+            </div>
+          </article>
+
+          <!-- キー型 -->
+          <article class="card">
+            <div class="card-tag">方式 B</div>
+            <h2 class="card-title">
+              <span class="icon">🔑</span>
+              キー型（ペア区切り）
+            </h2>
+            <p class="card-desc">
+              <code>a=TEST;b=10;c=2025-11-14 00:00</code>
+              のように <strong>key=value</strong> 形式で読み取る方式です。
+            </p>
+            <ul class="card-list">
+              <li>キー名と a/b/c/d/e の対応をマッピングで定義</li>
+              <li>ペア区切り（例：<code>;</code> や 改行）を選択可能</li>
+              <li>単純区切り型と同じ判定ロジックで OK/NG/ERR を判定</li>
+            </ul>
+            <div class="card-footer">
+              <!-- ▼▼ ここを現在の「キー型ジェネレーター」の URL に変更してください ▼▼ -->
+              <a href="pc-kv.html" class="btn-primary">
+                この方式の設定画面へ
+                <span class="arrow">›</span>
+              </a>
+              <div class="card-hint">
+                href="pc-kv.html" を<br />実運用ページのパスに変更してください
+              </div>
+            </div>
+          </article>
+
+          <!-- 固定長 / 文字数区切り型 -->
+          <article class="card">
+            <div class="card-tag">方式 C</div>
+            <h2 class="card-title">
+              <span class="icon">📏</span>
+              文字数区切り型（固定長）
+            </h2>
+            <p class="card-desc">
+              SCAN 文字列を文字数で切り分ける固定長方式です。
+              各項目ごとに文字数・型・判定条件を設定できます。
+            </p>
+            <ul class="card-list">
+              <li>例）[4文字:品名][3文字:数量][16文字:日時] …</li>
+              <li>kintone フィールド型（文字列・数値・日時・日付・時刻）を選択</li>
+              <li>NG/ERR 時は SCAN を残しつつサブテーブルへ追記</li>
+            </ul>
+            <div class="card-footer">
+              <!-- ▼▼ ここを現在の「固定長ジェネレーター」の URL に変更してください ▼▼ -->
+              <a href="pc-fixedwidth.html" class="btn-primary">
+                この方式の設定画面へ
+                <span class="arrow">›</span>
+              </a>
+              <div class="card-hint">
+                href="pc-fixedwidth.html" を<br />実運用ページのパスに変更してください
+              </div>
+            </div>
+          </article>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner">
+        <div>© 2025 QR SCAN JS Generator</div>
+        <div>GitHub Pages / 静的ホスティング対応</div>
+      </div>
+    </footer>
+  </div>
+</body>
+</html>

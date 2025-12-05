@@ -568,10 +568,10 @@
         }
         case 'date': {
           let d = t;
-          if (/^\d{4}\/\d{2}\/\d{2}$/.test(d)) {
-            d = d.replace(/\//g, '-');
+          if (/^\\d{4}\\/\\d{2}\\/\\d{2}$/.test(d)) {
+            d = d.replace(/\\//g, '-');
           }
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+          if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d)) {
             throw new Error('日付フィールド "' + name + '" の値が不正です: ' + t);
           }
           info.date = d;
@@ -579,10 +579,10 @@
         }
         case 'time': {
           let tm = t;
-          if (/^\d{4}$/.test(tm)) {
+          if (/^\\d{4}$/.test(tm)) {
             tm = tm.slice(0, 2) + ':' + tm.slice(2, 4);
           }
-          if (!/^\d{2}:\d{2}$/.test(tm)) {
+          if (!/^\\d{2}:\\d{2}$/.test(tm)) {
             throw new Error('時刻フィールド "' + name + '" の値が不正です: ' + t);
           }
           const min = parseTimeToMin(tm);
@@ -596,11 +596,11 @@
         case 'datetime': {
           let dateStr, timeStr;
           const dv = t;
-          if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dv)) {
+          if (/^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}$/.test(dv)) {
             dateStr = dv.slice(0, 10);
             timeStr = dv.slice(11, 16);
-          } else if (/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/.test(dv)) {
-            dateStr = dv.slice(0, 10).replace(/\//g, '-');
+          } else if (/^\\d{4}\\/\\d{2}\\/\\d{2} \\d{2}:\\d{2}$/.test(dv)) {
+            dateStr = dv.slice(0, 10).replace(/\\//g, '-');
             timeStr = dv.slice(11, 16);
           } else if (/^[0-9]{12}$/.test(dv)) {
             dateStr = dv.slice(0, 4) + '-' + dv.slice(4, 6) + '-' + dv.slice(6, 8);
@@ -780,7 +780,9 @@
         parsed = parseScan(raw);
       } catch (e) {
         status.textContent = 'NG: ' + e.message;
-        // パースエラー時も SCAN は残す
+        // パースエラー時も SCAN を残し、全選択
+        input.focus();
+        input.select();
         return;
       }
 
@@ -790,19 +792,22 @@
 
       if (evalRes.configError) {
         status.textContent = 'ERR (設定エラー)';
-        // ERR のときは SCAN を残す
+        // ERR のときは SCAN を残し、全選択
         input.value = raw;
+        input.focus();
+        input.select();
       } else if (!evalRes.ok) {
         status.textContent = 'NG';
-        // NG のときも SCAN を残す
+        // NG のときも SCAN を残し、全選択
         input.value = raw;
+        input.focus();
+        input.select();
       } else {
         status.textContent = 'OK';
         // OK のときだけ SCAN をクリア
         input.value = '';
+        input.focus();
       }
-
-      input.focus();
     });
   }
 

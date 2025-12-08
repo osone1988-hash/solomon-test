@@ -18,8 +18,6 @@
       --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
       --shadow-md: 0 10px 25px rgba(15, 23, 42, 0.08);
     }
-<!-- ログインバー（auth.js が中身を描画） -->
-<div id="auth-bar"></div>
 
     * { box-sizing: border-box; }
 
@@ -287,6 +285,9 @@
   </style>
 </head>
 <body>
+  <!-- ログインバー（auth.js が中身を描画） -->
+  <div id="auth-bar"></div>
+
   <div class="page">
     <header class="header">
       <div class="header-inner">
@@ -370,10 +371,10 @@
           </p>
 
           <div class="buttons-row">
-            <button id="kv-generate-btn" class="btn-primary" type="button">
+            <button id="kv-generate-btn" class="btn-primary" type="button" data-require-login="true">
               JSコード生成
             </button>
-            <button id="kv-download-btn" class="btn-secondary" type="button" disabled>
+            <button id="kv-download-btn" class="btn-secondary" type="button" data-require-login="true" disabled>
               JSファイルをダウンロード
             </button>
             <span id="kv-status" class="status-text">未生成</span>
@@ -397,6 +398,5 @@
 
   <script src="app-kv.js"></script>
   <script type="module" src="auth.js"></script>
-
 </body>
 </html>

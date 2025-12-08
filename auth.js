@@ -1,8 +1,10 @@
 // auth.js
-// Firebase Authentication 共通処理
+// Firebase Authentication + Firestore 会員管理
 // - メール＋パスワードでサインアップ／ログイン
-// - #auth-bar にログインバーを表示
-// - data-require-login="true" が付いたボタンを「ログイン必須」にする
+// - users/{uid} にユーザープロファイルを自動作成
+//   { email, plan, status, createdAt }
+// - data-require-login="true" のボタンを
+//   「ログインかつ status==="active" のときだけ有効」にする
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
 import {
@@ -12,6 +14,13 @@ import {
   createUserWithEmailAndPassword,
   signOut
 } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
+import {
+  getFirestore,
+  doc,
+  getDoc,
+  setDoc,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
@@ -28,15 +37,18 @@ const firebaseConfig = {
 // --- Firebase 初期化 ---
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
+const db   = getFirestore(app);
 
 // グローバル公開
 const listeners = [];
 const tanaAuth = {
   auth,
+  db,
   currentUser: null,
+  profile: null, // Firestore の users/{uid} の中身
   onChange(callback) {
     listeners.push(callback);
-    callback(this.currentUser);
+    callback(this.currentUser, this.profile);
   },
   async signIn(email, password) {
     return await signInWithEmailAndPassword(auth, email, password);
@@ -50,10 +62,48 @@ const tanaAuth = {
 };
 window.tanaAuth = tanaAuth;
 
-// 認証状態監視
+// --- ユーザープロファイルを Firestore に作成／取得 ---
+async function ensureUserProfile(user) {
+  if (!user) return null;
+
+  const ref = doc(db, "users", user.uid);
+  const snap = await getDoc(ref);
+
+  if (!snap.exists()) {
+    const profile = {
+      email: user.email || "",
+      plan: "free",          // 初期プラン
+      status: "active",      // 初期ステータス
+      createdAt: serverTimestamp()
+    };
+    await setDoc(ref, profile, { merge: true });
+    return profile;
+  } else {
+    return snap.data();
+  }
+}
+
+// --- 認証状態 + プロファイル監視 ---
 onAuthStateChanged(auth, (user) => {
-  tanaAuth.currentUser = user || null;
-  listeners.forEach(fn => fn(user || null));
+  if (!user) {
+    tanaAuth.currentUser = null;
+    tanaAuth.profile = null;
+    listeners.forEach(fn => fn(null, null));
+    return;
+  }
+
+  tanaAuth.currentUser = user;
+
+  ensureUserProfile(user)
+    .then((profile) => {
+      tanaAuth.profile = profile || null;
+      listeners.forEach(fn => fn(user, tanaAuth.profile));
+    })
+    .catch((err) => {
+      console.error("ユーザープロファイル取得エラー:", err);
+      tanaAuth.profile = null;
+      listeners.forEach(fn => fn(user, null));
+    });
 });
 
 // === ログインバー描画 ===
@@ -65,6 +115,7 @@ function setupAuthBar() {
     <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;padding:6px 8px;border-radius:8px;background:#eef2ff;">
       <span id="auth-status-text" style="font-weight:600;">未ログイン</span>
       <span id="auth-user-email" style="color:#4b5563;"></span>
+      <span id="auth-profile-info" style="color:#6b7280;font-size:11px;"></span>
 
       <div id="auth-logged-out" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;">
         <input id="auth-email" type="email" placeholder="メールアドレス"
@@ -94,6 +145,7 @@ function setupAuthBar() {
 
   const statusText = document.getElementById('auth-status-text');
   const userEmail  = document.getElementById('auth-user-email');
+  const profileInfo= document.getElementById('auth-profile-info');
   const loggedOut  = document.getElementById('auth-logged-out');
   const loggedIn   = document.getElementById('auth-logged-in');
   const messageEl  = document.getElementById('auth-message');
@@ -137,36 +189,48 @@ function setupAuthBar() {
     }
   });
 
-  tanaAuth.onChange((user) => {
+  // ログイン状態 + プラン表示
+  tanaAuth.onChange((user, profile) => {
     if (user) {
       statusText.textContent = 'ログイン中';
       userEmail.textContent  = user.email || '';
-      loggedOut.style.display = 'flex';
-      loggedIn.style.display  = 'flex';
+
+      const plan   = profile && profile.plan   ? profile.plan   : 'free';
+      const status = profile && profile.status ? profile.status : 'active';
+      profileInfo.textContent = `（プラン: ${plan} / 状態: ${status}）`;
+
       loggedOut.style.display = 'none';
-      messageEl.textContent = '';
+      loggedIn.style.display  = 'flex';
+      messageEl.textContent   = '';
     } else {
       statusText.textContent = '未ログイン';
       userEmail.textContent  = '';
+      profileInfo.textContent= '';
       loggedOut.style.display = 'flex';
       loggedIn.style.display  = 'none';
     }
   });
 }
 
-// === ログイン必須ボタン制御 ===
+// === ログイン＋会員ステータスでボタン制御 ===
+// data-require-login="true" のボタンを、
+// 「ログイン中 かつ status==="active"」のときだけ有効にする
 function setupRequireLoginButtons() {
   const buttons = Array.from(
     document.querySelectorAll('[data-require-login="true"]')
   );
   if (!buttons.length) return;
 
-  function update(user) {
-    const disabled = !user;
+  function update(user, profile) {
+    const status = profile && profile.status ? profile.status : 'active';
+    const isActiveMember = !!user && status === 'active';
+
     buttons.forEach(btn => {
-      btn.disabled = disabled;
-      if (disabled) {
+      btn.disabled = !isActiveMember;
+      if (!user) {
         btn.title = '利用するにはログインが必要です';
+      } else if (!isActiveMember) {
+        btn.title = '有効な会員ステータスではありません';
       } else {
         btn.title = '';
       }

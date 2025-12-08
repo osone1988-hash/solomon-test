@@ -185,8 +185,9 @@
       <small>kintone 用の単純区切りスキャナJS（最大20項目・1項目最大5条件対応）をブラウザで生成</small>
     </h1>
   </header>
-<!-- ログインバー（auth.js が中身を描画） -->
-<div id="auth-bar"></div>
+
+  <!-- ログインバー（auth.js が中身を描画） -->
+  <div id="auth-bar"></div>
 
   <main>
     <section class="card">
@@ -251,8 +252,12 @@
       <h2>3. JS 生成 & ダウンロード</h2>
 
       <div class="actions">
-        <button type="button" class="primary" id="simple-generate-btn">JSコードを生成</button>
-        <button type="button" class="outline" id="simple-download-btn" disabled>JSファイルをダウンロード</button>
+        <button type="button" class="primary" id="simple-generate-btn" data-require-login="true">
+          JSコードを生成
+        </button>
+        <button type="button" class="outline" id="simple-download-btn" data-require-login="true" disabled>
+          JSファイルをダウンロード
+        </button>
       </div>
       <div class="status-line" id="simple-status">まだ生成されていません。</div>
       <textarea id="simple-code-output" class="code-output" spellcheck="false" placeholder="// ここに生成されたJSコードが表示されます"></textarea>
@@ -263,4 +268,3 @@
   <script type="module" src="auth.js"></script>
 </body>
 </html>
-

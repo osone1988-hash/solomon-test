@@ -2,264 +2,396 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
-  <title>QR 読み取り JS 生成ツール（キー型）</title>
+  <title>キー型 QR SCAN JS ジェネレーター</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: #f5f7fb;
-      color: #111827;
-    }
-    header {
-      background: #1f2933;
-      color: #fff;
-      padding: 12px 20px;
-    }
-    header h1 {
-      margin: 0;
-      font-size: 18px;
-    }
-    header small {
-      opacity: 0.85;
-      font-size: 11px;
-    }
-    main {
-      max-width: 1000px;
-      margin: 16px auto 32px;
-      padding: 0 12px;
-    }
-    .card {
-      background: #fff;
-      border-radius: 10px;
-      box-shadow: 0 4px 12px rgba(15,23,42,0.08);
-      padding: 16px 20px;
-      margin-bottom: 16px;
-    }
-    h2 {
-      margin-top: 0;
-      font-size: 18px;
-    }
-    .field-row {
-      display: flex;
-      gap: 12px;
-      margin-bottom: 8px;
-      flex-wrap: wrap;
-    }
-    .field-row label {
-      flex: 0 0 180px;
-      font-size: 13px;
-      color: #4b5563;
-    }
-    .field-row input,
-    .field-row select {
-      flex: 1 1 240px;
-      padding: 6px 8px;
-      border-radius: 6px;
-      border: 1px solid #d1d5db;
-      font-size: 13px;
-    }
-    .hint {
-      font-size: 11px;
-      color: #6b7280;
-      margin: 0 0 6px 180px;
+    :root {
+      --bg: #f3f4f6;
+      --card-bg: #ffffff;
+      --border: #e5e7eb;
+      --text-main: #111827;
+      --text-sub: #4b5563;
+      --accent: #2563eb;
+      --accent-soft: #dbeafe;
+      --radius-lg: 12px;
+      --radius-md: 8px;
+      --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+      --shadow-md: 0 10px 25px rgba(15, 23, 42, 0.08);
     }
 
-    .actions {
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      background: radial-gradient(circle at top, #e5f0ff, #f9fafb 50%, #eef2ff);
+      color: var(--text-main);
+    }
+
+    .page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      padding: 24px 16px 16px;
+    }
+
+    .header-inner {
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    .title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      margin: 0 0 6px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .title-icon {
+      font-size: 22px;
+    }
+
+    .subtitle {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-sub);
+    }
+
+    .main {
+      flex: 1;
+      padding: 8px 16px 32px;
+    }
+
+    .main-inner {
+      max-width: 980px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    @media (max-width: 800px) {
+      .main-inner {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .panel {
+      background: var(--card-bg);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow-md);
+      padding: 16px 18px 14px;
+    }
+
+    .panel-title {
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .panel-title span.icon {
+      font-size: 16px;
+    }
+
+    .panel-desc {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: var(--text-sub);
+    }
+
+    .section {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px dashed #e5e7eb;
+    }
+
+    .section-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+
+    .section-desc {
+      font-size: 11px;
+      color: #6b7280;
+      margin-bottom: 6px;
+    }
+
+    .field-row {
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      margin-top: 10px;
-      margin-bottom: 4px;
+      margin-bottom: 6px;
     }
-    button.primary,
-    button.outline {
-      padding: 6px 12px;
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .field label {
+      font-size: 11px;
+      color: #6b7280;
+    }
+
+    .field input,
+    .field select,
+    textarea {
+      font-size: 12px;
+      padding: 5px 8px;
       border-radius: 6px;
-      cursor: pointer;
-      font-size: 13px;
+      border: 1px solid #d1d5db;
+      min-width: 0;
+    }
+
+    .field input:focus,
+    .field select:focus,
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px var(--accent-soft);
+    }
+
+    .field.small {
+      width: 120px;
+    }
+
+    .field.medium {
+      flex: 1 1 160px;
+    }
+
+    .field.xsmall {
+      width: 90px;
+    }
+
+    .field.full {
+      width: 100%;
+    }
+
+    .field-group {
+      border-radius: var(--radius-md);
+      border: 1px solid #e5e7eb;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: #f9fafb;
+    }
+
+    .field-group-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #374151;
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .field-group-title span.tag {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .field-group-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 6px 10px;
+    }
+
+    .buttons-row {
+      margin-top: 8px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .btn-primary,
+    .btn-secondary {
       display: inline-flex;
       align-items: center;
-      gap: 4px;
+      justify-content: center;
+      gap: 6px;
+      padding: 7px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      border-radius: 999px;
+      border: none;
+      cursor: pointer;
+      text-decoration: none;
+      white-space: nowrap;
     }
-    button.primary {
-      background: #2563eb;
-      border: 1px solid #1d4ed8;
-      color: #fff;
+
+    .btn-primary {
+      color: white;
+      background: linear-gradient(135deg, #2563eb, #1d4ed8);
+      box-shadow: var(--shadow-sm);
     }
-    button.outline {
-      background: #fff;
-      border: 1px solid #9ca3af;
-      color: #374151;
-    }
-    button.primary:disabled,
-    button.outline:disabled {
+
+    .btn-primary:disabled {
       opacity: 0.5;
       cursor: default;
     }
 
-    .status-line {
-      font-size: 12px;
-      color: #4b5563;
-      margin-top: 4px;
-    }
-    .code-output {
-      width: 100%;
-      min-height: 220px;
-      font-family: SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-      font-size: 12px;
-      padding: 8px;
-      border-radius: 8px;
-      border: 1px solid #d1d5db;
-      background: #0b1120;
-      color: #e5e7eb;
-      margin-top: 8px;
-      resize: vertical;
+    .btn-secondary {
+      color: #374151;
+      background: #e5e7eb;
     }
 
-    .field-group {
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      padding: 8px 10px;
-      margin-top: 8px;
-      background: #f9fafb;
-    }
-    .field-group-title {
-      font-size: 13px;
-      font-weight: 600;
-      margin-bottom: 4px;
-      color: #111827;
-    }
-    .field-group-grid {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-top: 4px;
-    }
-    .mini-field {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      min-width: 150px;
-    }
-    .mini-label {
+    .status-text {
       font-size: 11px;
       color: #6b7280;
     }
-    .mini-field input,
-    .mini-field select {
-      padding: 4px 6px;
-      border-radius: 6px;
-      border: 1px solid #d1d5db;
-      font-size: 12px;
+
+    textarea {
+      width: 100%;
+      min-height: 260px;
+      resize: vertical;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
     }
 
-    @media (max-width: 640px) {
-      .field-row label {
-        flex: 0 0 100%;
-        margin-bottom: 2px;
-      }
-      .hint {
-        margin-left: 0;
-      }
+    .footer {
+      padding: 10px 16px 18px;
+      font-size: 11px;
+      color: #9ca3af;
+    }
+
+    .footer-inner {
+      max-width: 980px;
+      margin: 0 auto;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>
-      QR 読み取り JS 生成ツール（キー型）
-      <br />
-      <small>key=value 型の QR を kintone に取り込む JS をブラウザで生成</small>
-    </h1>
-  </header>
-
-  <main>
-    <section class="card">
-      <h2>1. 共通設定</h2>
-
-      <div class="field-row">
-        <label for="kv-space-id">SCAN スペースコード</label>
-        <input id="kv-space-id" type="text" value="scan_area" />
+  <div class="page">
+    <header class="header">
+      <div class="header-inner">
+        <h1 class="title">
+          <span class="title-icon">🔑</span>
+          キー型 QR SCAN JS ジェネレーター
+        </h1>
+        <p class="subtitle">
+          例）<code>a=TEST;b=10;c=2025-11-14 00:00;d=2025-11-14;e=00:00;</code> のような
+          key=value 形式の QR 情報から、kintone 用の判定 JS を自動生成します。
+        </p>
       </div>
-      <p class="hint">kintone のスペースフィールドコード。ここに SCAN 用のテキストボックスを表示します。</p>
+    </header>
 
-      <div class="field-row">
-        <label for="kv-pair-delimiter">ペア区切り文字</label>
-        <input id="kv-pair-delimiter" type="text" value=";" />
+    <main class="main">
+      <div class="main-inner">
+        <!-- 左：設定 -->
+        <section class="panel">
+          <h2 class="panel-title">
+            <span class="icon">⚙️</span>
+            基本設定
+          </h2>
+          <p class="panel-desc">
+            kintone 側のフィールドコードや、キーの前後文字列を設定してください。<br />
+            条件フィールドは現在「最大2条件」入力ですが、内部エンジンは「最大5条件」まで拡張できる形で生成されます。
+          </p>
+
+          <!-- 共通設定 -->
+          <div class="section">
+            <div class="section-title">共通（スペース / サブテーブル）</div>
+            <div class="field-row">
+              <div class="field small">
+                <label for="kv-space-id">SCAN スペースID</label>
+                <input id="kv-space-id" type="text" value="scan_area" />
+              </div>
+              <div class="field xsmall">
+                <label for="kv-field-count">項目数</label>
+                <input id="kv-field-count" type="number" min="1" max="20" value="5" />
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field small">
+                <label for="kv-table-code">サブテーブルコード</label>
+                <input id="kv-table-code" type="text" value="scan_table" />
+              </div>
+              <div class="field small">
+                <label for="kv-table-scanat">SCAN日時フィールド</label>
+                <input id="kv-table-scanat" type="text" value="scan_at" />
+              </div>
+              <div class="field small">
+                <label for="kv-table-result">結果フィールド</label>
+                <input id="kv-table-result" type="text" value="result" />
+              </div>
+              <div class="field small">
+                <label for="kv-table-reason">理由フィールド</label>
+                <input id="kv-table-reason" type="text" value="reason" />
+              </div>
+            </div>
+          </div>
+
+          <!-- フィールド定義 -->
+          <div class="section">
+            <div class="section-title">項目別設定（キー / 型 / 判定フィールド）</div>
+            <p class="section-desc">
+              例）項目1：キー <code>a</code> ／ 前文字列 <code>a=</code> ／ 後文字列
+              <code>;</code> と設定すると、SCAN 内の <code>a=値;</code> の「値」部分を読み取ります。
+            </p>
+            <div id="kv-fields-container"></div>
+          </div>
+        </section>
+
+        <!-- 右：生成結果 -->
+        <section class="panel">
+          <h2 class="panel-title">
+            <span class="icon">🧩</span>
+            生成された JS コード
+          </h2>
+          <p class="panel-desc">
+            「JSコード生成」ボタンを押すと、下に kintone 用のキー型 SCAN JS が生成されます。
+            内容を確認のうえ、「JSファイルをダウンロード」でファイル保存してください。
+          </p>
+
+          <div class="buttons-row">
+            <button id="kv-generate-btn" class="btn-primary" type="button">
+              JSコード生成
+            </button>
+            <button id="kv-download-btn" class="btn-secondary" type="button" disabled>
+              JSファイルをダウンロード
+            </button>
+            <span id="kv-status" class="status-text">未生成</span>
+          </div>
+
+          <div class="section">
+            <div class="section-title">出力コード</div>
+            <textarea id="kv-code-output" spellcheck="false"></textarea>
+          </div>
+        </section>
       </div>
-      <p class="hint">
-        例: <code>;</code>, <code>&amp;</code>, 改行のみで区切る場合は空欄にして「改行」を選択します。
-      </p>
+    </main>
 
-      <div class="field-row">
-        <label for="kv-pair-delimiter-mode">ペア区切りモード</label>
-        <select id="kv-pair-delimiter-mode">
-          <option value="char" selected>文字（上の1文字で区切る）</option>
-          <option value="newline">改行で区切る</option>
-        </select>
+    <footer class="footer">
+      <div class="footer-inner">
+        <div>キー型 QR SCAN JS Generator</div>
+        <div>kintone カスタマイズ用 JS を静的サイトから出力</div>
       </div>
-
-      <div class="field-row">
-        <label for="kv-assign-op">キーと値の区切り</label>
-        <select id="kv-assign-op">
-          <option value="=" selected>=</option>
-          <option value=":">:</option>
-          <option value="=>">=></option>
-        </select>
-      </div>
-      <p class="hint">例: <code>PRODUCT=TEST</code>, <code>SIZE:10</code>, <code>KEY=&gt;VALUE</code> など。</p>
-
-      <div class="field-row">
-        <label for="kv-field-count">項目数（論理フィールド数）</label>
-        <input id="kv-field-count" type="number" min="1" max="20" value="5" />
-      </div>
-      <p class="hint">最大 20 まで。キーの種類が 5つなら「5」、7つなら「7」のように設定します。</p>
-
-      <div class="field-row">
-        <label for="kv-table-code">サブテーブル フィールドコード</label>
-        <input id="kv-table-code" type="text" value="scan_table" />
-      </div>
-
-      <div class="field-row">
-        <label for="kv-table-scanat">テーブル: SCAN日時</label>
-        <input id="kv-table-scanat" type="text" value="scan_at" />
-      </div>
-
-      <div class="field-row">
-        <label for="kv-table-result">テーブル: 結果(OK/NG/ERR)</label>
-        <input id="kv-table-result" type="text" value="result" />
-      </div>
-
-      <div class="field-row">
-        <label for="kv-table-reason">テーブル: 理由</label>
-        <input id="kv-table-reason" type="text" value="reason" />
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>2. キーごとの設定（key → 論理フィールド）</h2>
-      <p style="font-size:12px;color:#4b5563;margin-top:0;margin-bottom:6px;">
-        QR に含まれるキーごとに、キー文字列・論理名・型・テーブル転記先・判定用フィールドコードを設定します。<br />
-        型は「文字列（1行・選択型）／数値／日付／時刻／日時」から選択します。<br />
-        日時は「日付＋時刻」を1ペア分の値として扱います（例: <code>DT=2025-11-14 12:00</code> など）。
-      </p>
-
-      <div id="kv-fields-container"></div>
-    </section>
-
-    <section class="card">
-      <h2>3. JS 生成 & ダウンロード</h2>
-
-      <div class="actions">
-        <button type="button" class="primary" id="kv-generate-btn">JSコードを生成</button>
-        <button type="button" class="outline" id="kv-download-btn" disabled>JSファイルをダウンロード</button>
-      </div>
-      <div class="status-line" id="kv-status">まだ生成されていません。</div>
-      <textarea id="kv-code-output" class="code-output" spellcheck="false" placeholder="// ここに生成されたキー型スキャナのJSコードが表示されます"></textarea>
-    </section>
-  </main>
+    </footer>
+  </div>
 
   <script src="app-kv.js"></script>
 </body>

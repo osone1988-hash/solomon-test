@@ -1,42 +1,41 @@
 // auth.js
 // Firebase Authentication 共通処理
-// - メール＋パスワードでのサインアップ／ログイン
-// - ログインバー描画（#auth-bar）
-// - [data-require-login="true"] なボタンを「ログイン必須」にする
+// - メール＋パスワードでサインアップ／ログイン
+// - #auth-bar にログインバーを表示
+// - data-require-login="true" が付いたボタンを「ログイン必須」にする
 
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.6.0/firebase-app.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-app.js";
 import {
   getAuth,
   onAuthStateChanged,
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut
-} from "https://www.gstatic.com/firebasejs/12.6.0/firebase-auth.js";
+} from "https://www.gstatic.com/firebasejs/11.1.0/firebase-auth.js";
 
-// 🔴 ここを Firebase コンソールで取得した値に差し替えてください
-// （「プロジェクトの設定 → 全般 → アプリ → SDK の設定と構成」に出てくるもの）
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyADQlKzZyiGJwajXQ-pfvmEN04r2U4YB_w",
+  authDomain: "qr-scan-service.firebaseapp.com",
+  projectId: "qr-scan-service",
+  storageBucket: "qr-scan-service.firebasestorage.app",
+  messagingSenderId: "555293545036",
+  appId: "1:555293545036:web:3b2d6f906e68e979e5dae9",
+  measurementId: "G-DJEYHX0P42"
 };
-// 🔴 ここまでを書き換え
 
-// Firebase 初期化
+// --- Firebase 初期化 ---
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 
-// グローバル公開用オブジェクト
+// グローバル公開
 const listeners = [];
 const tanaAuth = {
   auth,
   currentUser: null,
   onChange(callback) {
     listeners.push(callback);
-    // 現状態も即座に返す
     callback(this.currentUser);
   },
   async signIn(email, password) {
@@ -51,16 +50,16 @@ const tanaAuth = {
 };
 window.tanaAuth = tanaAuth;
 
-// 認証状態の変化を監視
+// 認証状態監視
 onAuthStateChanged(auth, (user) => {
   tanaAuth.currentUser = user || null;
   listeners.forEach(fn => fn(user || null));
 });
 
-// ===== ログインバー（#auth-bar）を組み立てる =====
+// === ログインバー描画 ===
 function setupAuthBar() {
   const root = document.getElementById('auth-bar');
-  if (!root) return; // このページにバーがないなら何もしない
+  if (!root) return;
 
   root.innerHTML = `
     <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:12px;padding:6px 8px;border-radius:8px;background:#eef2ff;">
@@ -138,13 +137,13 @@ function setupAuthBar() {
     }
   });
 
-  // ログイン状態で表示切り替え
   tanaAuth.onChange((user) => {
     if (user) {
       statusText.textContent = 'ログイン中';
       userEmail.textContent  = user.email || '';
-      loggedOut.style.display = 'none';
+      loggedOut.style.display = 'flex';
       loggedIn.style.display  = 'flex';
+      loggedOut.style.display = 'none';
       messageEl.textContent = '';
     } else {
       statusText.textContent = '未ログイン';
@@ -155,10 +154,9 @@ function setupAuthBar() {
   });
 }
 
-// ===== ログイン必須ボタンの制御 =====
-// data-require-login="true" が付いているボタンを、未ログインなら disabled にする
+// === ログイン必須ボタン制御 ===
 function setupRequireLoginButtons() {
-  const buttons = Array.prototype.slice.call(
+  const buttons = Array.from(
     document.querySelectorAll('[data-require-login="true"]')
   );
   if (!buttons.length) return;
@@ -178,7 +176,6 @@ function setupRequireLoginButtons() {
   tanaAuth.onChange(update);
 }
 
-// DOM 準備完了後に UI セットアップ
 document.addEventListener('DOMContentLoaded', () => {
   setupAuthBar();
   setupRequireLoginButtons();

@@ -1,162 +1,328 @@
 // app-kv.js
-// キー型（key=value）QR SCAN JS 生成ツール
-// - 各項目ごとに「キー / 前文字列 / 後文字列 / 型 / 判定フィールド」を設定
-// - 1項目=最大5条件（UIは2条件分）の評価ロジックで OK/NG/ERR 判定
+// キー型 QR SCAN JS ジェネレーター
+// - kintone 用ランタイム JS を生成
+// - Firestore にユーザーごとの設定を保存 / 読み込み（mode: "kv"）
 
-(function () {
-  'use strict';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-  // ========= 共通ユーティリティ =========
-  function $(sel) { return document.querySelector(sel); }
+const TYPE_OPTIONS = [
+  { value: "text",     label: "文字列 (1行・選択型)" },
+  { value: "number",   label: "数値" },
+  { value: "datetime", label: "日時" },
+  { value: "date",     label: "日付" },
+  { value: "time",     label: "時刻" }
+];
 
-  function downloadJs(filename, source) {
-    if (!source || !source.trim()) {
-      alert('先に JSコードを生成してください。');
-      return;
-    }
-    const blob = new Blob([source], { type: 'text/javascript;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+// デフォルト5項目分（必要に応じて変更可）
+const KV_FIELD_PRESETS = {
+  1: { name: "a", label: "a", type: "text",     tableField: "at", key: "a", before: "a=", after: ";", value1: "a",  op1: "aj",  value2: "a2", op2: "aj2", join1: "as1" },
+  2: { name: "b", label: "b", type: "number",   tableField: "bt", key: "b", before: "b=", after: ";", value1: "b",  op1: "bj",  value2: "b2", op2: "bj2", join1: "bs1" },
+  3: { name: "c", label: "c", type: "datetime", tableField: "ct", key: "c", before: "c=", after: ";", value1: "c",  op1: "cj",  value2: "c2", op2: "cj2", join1: "cs1" },
+  4: { name: "d", label: "d", type: "date",     tableField: "dt", key: "d", before: "d=", after: ";", value1: "d",  op1: "dj",  value2: "d2", op2: "dj2", join1: "ds1" },
+  5: { name: "e", label: "e", type: "time",     tableField: "et", key: "e", before: "e=", after: ";", value1: "e",  op1: "ej",  value2: "e2", op2: "ej2", join1: "es1" }
+};
+
+let kvConfigsCache = {};
+
+function $(id) { return document.getElementById(id); }
+
+function downloadJs(filename, source) {
+  if (!source || !source.trim()) {
+    alert("先に JSコードを生成してください。");
+    return;
   }
+  const blob = new Blob([source], { type: "text/javascript;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
-  // ========= フィールド設定 UI構築 =========
-  function setupKvFieldsUI() {
-    const fieldCountInput = $('#kv-field-count');
-    const container = $('#kv-fields-container');
+// ===== UI生成 =====
+function makeMiniField(labelText, id, value) {
+  const wrap = document.createElement("div");
+  wrap.className = "field";
+  const lbl = document.createElement("label");
+  lbl.className = "mini-label";
+  lbl.textContent = labelText;
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.id = id;
+  inp.value = value || "";
+  wrap.appendChild(lbl);
+  wrap.appendChild(inp);
+  return wrap;
+}
 
-    // 初期プリセット（a〜e）
-    const presets = {
-      1: { name: 'a', label: 'a', key: 'a', before: 'a=', after: ';', type: 'text',     tableField: 'at', value1: 'a',  op1: 'aj',  value2: 'a2', op2: 'aj2', join1: 'as1' },
-      2: { name: 'b', label: 'b', key: 'b', before: 'b=', after: ';', type: 'number',   tableField: 'bt', value1: 'b',  op1: 'bj',  value2: 'b2', op2: 'bj2', join1: 'bs1' },
-      3: { name: 'c', label: 'c', key: 'c', before: 'c=', after: ';', type: 'datetime', tableField: 'ct', value1: 'c',  op1: 'cj',  value2: 'c2', op2: 'cj2', join1: 'cs1' },
-      4: { name: 'd', label: 'd', key: 'd', before: 'd=', after: ';', type: 'date',     tableField: 'dt', value1: 'd',  op1: 'dj',  value2: 'd2', op2: 'dj2', join1: 'ds1' },
-      5: { name: 'e', label: 'e', key: 'e', before: 'e=', after: ';', type: 'time',     tableField: 'et', value1: 'e',  op1: 'ej',  value2: 'e2', op2: 'ej2', join1: 'es1' }
-    };
+function renderKvFields(config) {
+  const countInput = $("kv-field-count");
+  let count = parseInt(countInput.value, 10);
+  if (!Number.isFinite(count) || count < 1) count = 1;
+  if (config && Array.isArray(config.fields)) {
+    count = config.fields.length;
+  }
+  if (count > 20) count = 20;
+  countInput.value = String(count);
 
-    const TYPE_OPTIONS = [
-      { value: 'text',     label: '文字列 (1行・選択型)' },
-      { value: 'number',   label: '数値' },
-      { value: 'datetime', label: '日時' },
-      { value: 'date',     label: '日付' },
-      { value: 'time',     label: '時刻' }
-    ];
+  const container = $("kv-fields-container");
+  container.innerHTML = "";
 
-    function renderFields() {
-      let count = parseInt(fieldCountInput.value, 10);
-      if (Number.isNaN(count) || count < 1) count = 1;
-      if (count > 20) count = 20;
-      fieldCountInput.value = String(count);
+  for (let i = 1; i <= count; i++) {
+    const cfgField = config && config.fields && config.fields[i - 1];
+    const preset = KV_FIELD_PRESETS[i] || {};
+    const name   = (cfgField && cfgField.name) || preset.name || `f${i}`;
+    const label  = (cfgField && cfgField.label) || preset.label || name;
+    const type   = (cfgField && cfgField.type) || preset.type || "text";
+    const tableField = (cfgField && cfgField.tableField) || preset.tableField || "";
+    const key    = (cfgField && cfgField.key) || preset.key || name;
+    const before = (cfgField && cfgField.before) || preset.before || (key + "=");
+    const after  = (cfgField && cfgField.after)  || preset.after  || ";";
 
-      container.innerHTML = '';
+    const judge = (cfgField && cfgField.judge) || {};
+    const value1 = (judge.valueFields && judge.valueFields[0]) || preset.value1 || "";
+    const op1    = (judge.opFields    && judge.opFields[0])    || preset.op1    || "";
+    const value2 = (judge.valueFields && judge.valueFields[1]) || preset.value2 || "";
+    const op2    = (judge.opFields    && judge.opFields[1])    || preset.op2    || "";
+    const join1  = (judge.joinFields  && judge.joinFields[0])  || preset.join1  || "";
 
-      for (let i = 1; i <= count; i++) {
-        const preset = presets[i] || {};
-        const group = document.createElement('div');
-        group.className = 'field-group';
+    const group = document.createElement("div");
+    group.className = "field-group";
 
-        const title = document.createElement('div');
-        title.className = 'field-group-title';
-        title.innerHTML = '項目 ' + i + '<span class="tag">キー ' + (preset.key || '') + '</span>';
-        group.appendChild(title);
+    const title = document.createElement("div");
+    title.className = "field-group-title";
+    title.textContent = `項目 ${i}`;
+    const tag = document.createElement("span");
+    tag.className = "tag";
+    tag.textContent = "キー設定";
+    title.appendChild(tag);
+    group.appendChild(title);
 
-        const grid1 = document.createElement('div');
-        grid1.className = 'field-group-grid';
+    const grid1 = document.createElement("div");
+    grid1.className = "field-group-grid";
 
-        function makeField(labelText, id, value, cls) {
-          const wrap = document.createElement('div');
-          wrap.className = 'field ' + (cls || '');
-          const lbl = document.createElement('label');
-          lbl.htmlFor = id;
-          lbl.textContent = labelText;
-          const inp = document.createElement('input');
-          inp.type = 'text';
-          inp.id = id;
-          inp.value = value || '';
-          wrap.appendChild(lbl);
-          wrap.appendChild(inp);
-          return wrap;
-        }
+    // 論理名
+    grid1.appendChild(makeMiniField("論理名 (name)", `kv-field-${i}-name`, name));
+    // ラベル
+    grid1.appendChild(makeMiniField("ラベル (エラー表示用)", `kv-field-${i}-label`, label));
 
-        // 論理名
-        grid1.appendChild(makeField('論理名 (name)', 'kv-field-' + i + '-name', preset.name, 'small'));
+    // 型
+    const typeWrap = document.createElement("div");
+    typeWrap.className = "field";
+    const typeLbl = document.createElement("label");
+    typeLbl.textContent = "型（kintone フィールド型）";
+    const typeSel = document.createElement("select");
+    typeSel.id = `kv-field-${i}-type`;
+    TYPE_OPTIONS.forEach(opt => {
+      const o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if (opt.value === type) o.selected = true;
+      typeSel.appendChild(o);
+    });
+    typeWrap.appendChild(typeLbl);
+    typeWrap.appendChild(typeSel);
+    grid1.appendChild(typeWrap);
 
-        // ラベル
-        grid1.appendChild(makeField('ラベル (エラー表示用)', 'kv-field-' + i + '-label', preset.label, 'medium'));
+    // テーブル列
+    grid1.appendChild(makeMiniField("テーブル列フィールドコード", `kv-field-${i}-tableField`, tableField));
 
-        // kintone 型
-        const fType = document.createElement('div');
-        fType.className = 'field small';
-        const lblType = document.createElement('label');
-        lblType.htmlFor = 'kv-field-' + i + '-type';
-        lblType.textContent = '型（kintone フィールド型）';
-        const selType = document.createElement('select');
-        selType.id = 'kv-field-' + i + '-type';
-        const presetType = preset.type || 'text';
-        TYPE_OPTIONS.forEach(function (optDef) {
-          const opt = document.createElement('option');
-          opt.value = optDef.value;
-          opt.textContent = optDef.label;
-          if (optDef.value === presetType) opt.selected = true;
-          selType.appendChild(opt);
-        });
-        fType.appendChild(lblType);
-        fType.appendChild(selType);
-        grid1.appendChild(fType);
+    // キー名
+    grid1.appendChild(makeMiniField("キー名（例: a）", `kv-field-${i}-key`, key));
+    // 前文字列
+    grid1.appendChild(makeMiniField("前文字列（例: a=）", `kv-field-${i}-before`, before));
+    // 後文字列
+    grid1.appendChild(makeMiniField("後文字列（例: ;）", `kv-field-${i}-after`, after));
 
-        // キー / 前 / 後
-        grid1.appendChild(makeField('キー文字列 (例: a)', 'kv-field-' + i + '-key', preset.key, 'xsmall'));
-        grid1.appendChild(makeField('前文字列 (例: a=)', 'kv-field-' + i + '-before', preset.before, 'medium'));
-        grid1.appendChild(makeField('後文字列 (例: ;)', 'kv-field-' + i + '-after', preset.after, 'xsmall'));
+    group.appendChild(grid1);
 
-        // テーブル転記先
-        grid1.appendChild(makeField('テーブル列フィールドコード', 'kv-field-' + i + '-tableField', preset.tableField, 'medium'));
+    const subTitle = document.createElement("div");
+    subTitle.style.marginTop = "6px";
+    subTitle.style.fontSize = "12px";
+    subTitle.style.color = "#4b5563";
+    subTitle.textContent = "判定用フィールド (現在は最大2条件。内部は5条件まで拡張可能)";
+    group.appendChild(subTitle);
 
-        group.appendChild(grid1);
+    const grid2 = document.createElement("div");
+    grid2.className = "field-group-grid";
 
-        // 判定フィールド
-        const subTitle = document.createElement('div');
-        subTitle.style.marginTop = '6px';
-        subTitle.style.fontSize = '12px';
-        subTitle.style.color = '#4b5563';
-        subTitle.textContent = '判定用フィールド (現在は最大2条件。内部は5条件拡張可能)';
-        group.appendChild(subTitle);
+    grid2.appendChild(makeMiniField("値1フィールドコード",   `kv-field-${i}-value1`, value1));
+    grid2.appendChild(makeMiniField("条件1フィールドコード", `kv-field-${i}-op1`,    op1));
+    grid2.appendChild(makeMiniField("値2フィールドコード",   `kv-field-${i}-value2`, value2));
+    grid2.appendChild(makeMiniField("条件2フィールドコード", `kv-field-${i}-op2`,    op2));
+    grid2.appendChild(makeMiniField("AND/OR フィールドコード", `kv-field-${i}-join1`, join1));
 
-        const grid2 = document.createElement('div');
-        grid2.className = 'field-group-grid';
+    group.appendChild(grid2);
+    container.appendChild(group);
+  }
+}
 
-        grid2.appendChild(makeField('値1フィールドコード',     'kv-field-' + i + '-value1', preset.value1, 'small'));
-        grid2.appendChild(makeField('条件1フィールドコード',   'kv-field-' + i + '-op1',    preset.op1,    'small'));
-        grid2.appendChild(makeField('値2フィールドコード',     'kv-field-' + i + '-value2', preset.value2, 'small'));
-        grid2.appendChild(makeField('条件2フィールドコード',   'kv-field-' + i + '-op2',    preset.op2,    'small'));
-        grid2.appendChild(makeField('AND/OR フィールドコード', 'kv-field-' + i + '-join1',  preset.join1,  'small'));
+// ===== UI → 設定オブジェクト =====
+function collectKvConfigFromUI() {
+  const spaceId   = $("kv-space-id").value.trim() || "scan_area";
+  const tableCode = $("kv-table-code").value.trim() || "scan_table";
+  const scanAt    = $("kv-table-scanat").value.trim() || "scan_at";
+  const result    = $("kv-table-result").value.trim() || "result";
+  const reason    = $("kv-table-reason").value.trim() || "reason";
 
-        group.appendChild(grid2);
-        container.appendChild(group);
+  let fieldCount  = parseInt($("kv-field-count").value, 10);
+  if (!Number.isFinite(fieldCount) || fieldCount < 1) fieldCount = 1;
+  if (fieldCount > 20) fieldCount = 20;
+
+  const fields = [];
+  for (let i = 1; i <= fieldCount; i++) {
+    const name  = ($(`kv-field-${i}-name`).value || "").trim() || `f${i}`;
+    const label = ($(`kv-field-${i}-label`).value || "").trim() || name;
+    const type  = ($(`kv-field-${i}-type`).value || "text").trim();
+    const tableField = ($(`kv-field-${i}-tableField`).value || "").trim();
+    const key   = ($(`kv-field-${i}-key`).value || "").trim() || name;
+    const before= ($(`kv-field-${i}-before`).value || "").trim() || (key + "=");
+    const after = ($(`kv-field-${i}-after`).value || "").trim() || ";";
+
+    const value1 = ($(`kv-field-${i}-value1`).value || "").trim();
+    const op1    = ($(`kv-field-${i}-op1`).value || "").trim();
+    const value2 = ($(`kv-field-${i}-value2`).value || "").trim();
+    const op2    = ($(`kv-field-${i}-op2`).value || "").trim();
+    const join1  = ($(`kv-field-${i}-join1`).value || "").trim();
+
+    fields.push({
+      name,
+      label,
+      type,
+      tableField,
+      key,
+      before,
+      after,
+      judge: {
+        label,
+        valueFields: [value1, value2, "", "", ""],
+        opFields:    [op1,    op2,    "", "", ""],
+        joinFields:  [join1,  "",     "", "", ""]
       }
-    }
-
-    fieldCountInput.addEventListener('change', renderFields);
-    renderFields();
+    });
   }
 
-  // ========= キー型エンジン JS 生成 =========
-  function buildKvJs(config) {
-    const header = [
-      '// Generated by QR Config Tool',
-      '// Mode: key-value (max 20 fields, each up to 5 conditions)',
-      '// Generated at: ' + new Date().toISOString(),
-      ''
-    ].join('\n');
+  return {
+    version: 1,
+    mode: "kv",
+    spaceId,
+    fields,
+    table: {
+      code: tableCode,
+      scanAtField: scanAt,
+      resultField: result,
+      reasonField: reason
+    }
+  };
+}
 
-    const cfgJson = JSON.stringify(config, null, 2);
+// ===== 設定オブジェクト → UI =====
+function applyKvConfigToUI(cfg) {
+  if (!cfg) return;
+  $("kv-space-id").value   = cfg.spaceId || "scan_area";
+  $("kv-table-code").value = (cfg.table && cfg.table.code) || "scan_table";
+  $("kv-table-scanat").value = (cfg.table && cfg.table.scanAtField) || "scan_at";
+  $("kv-table-result").value = (cfg.table && cfg.table.resultField) || "result";
+  $("kv-table-reason").value = (cfg.table && cfg.table.reasonField) || "reason";
 
-    const engine = String.raw`
+  $("kv-field-count").value =
+    cfg.fields && cfg.fields.length ? String(cfg.fields.length) : "1";
+
+  renderKvFields(cfg);
+}
+
+// ===== Firestore: 設定保存・取得 =====
+async function refreshKvConfigList() {
+  const select = $("kv-config-select");
+  if (!select) return;
+
+  const auth = window.tanaAuth;
+  const user = auth && auth.currentUser;
+  const db   = auth && auth.db;
+  if (!user || !db) {
+    select.innerHTML = '<option value="">（ログインが必要です）</option>';
+    kvConfigsCache = {};
+    return;
+  }
+
+  select.innerHTML = '<option value="">（保存済み設定を選択）</option>';
+  kvConfigsCache = {};
+
+  try {
+    const colRef = collection(db, "users", user.uid, "configs");
+    const snap = await getDocs(colRef);
+    snap.forEach(docSnap => {
+      const data = docSnap.data();
+      if (!data || data.mode !== "kv" || !data.payload) return;
+      kvConfigsCache[docSnap.id] = data;
+      const opt = document.createElement("option");
+      opt.value = docSnap.id;
+      opt.textContent = data.name || "(無題)";
+      select.appendChild(opt);
+    });
+  } catch (e) {
+    console.error("KV設定一覧取得エラー:", e);
+    select.innerHTML = '<option value="">（設定の取得に失敗しました）</option>';
+  }
+}
+
+async function saveKvConfig() {
+  const statusEl = $("kv-status");
+  const auth = window.tanaAuth;
+  const user = auth && auth.currentUser;
+  const db   = auth && auth.db;
+
+  if (!user || !db) {
+    alert("設定を保存するにはログインが必要です。");
+    return;
+  }
+
+  const nameInput = $("kv-config-name");
+  const name = (nameInput.value || "").trim() || "無題";
+
+  const payload = collectKvConfigFromUI();
+
+  try {
+    const colRef = collection(db, "users", user.uid, "configs");
+    await addDoc(colRef, {
+      name,
+      mode: "kv",
+      payload,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    statusEl.textContent = `設定「${name}」を保存しました。`;
+    await refreshKvConfigList();
+  } catch (e) {
+    console.error("KV設定保存エラー:", e);
+    statusEl.textContent = "設定の保存に失敗しました。コンソールを確認してください。";
+  }
+}
+
+// ===== ランタイム JS 生成（キー型用） =====
+function buildKvJs(config) {
+  const header = [
+    "// Generated by QR Config Tool",
+    "// Mode: key-value (max 20 fields, up to 5 conditions each)",
+    "// Generated at: " + new Date().toISOString(),
+    ""
+  ].join("\n");
+
+  const cfgJson = JSON.stringify({
+    spaceId: config.spaceId,
+    fields: config.fields,
+    table: config.table
+  }, null, 2);
+
+  const engine = String.raw`
   const val = (rec, code) => (code && rec[code] ? rec[code].value : '');
   const nz  = (s) => String(s === undefined || s === null ? '' : s).trim() !== '';
 
@@ -202,11 +368,11 @@
     return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
   }
 
-  // ===== 判定関数（単一条件） =====
+  // ===== 判定関数（単純区切り版と同じ） =====
   function judgeText(scan, base, op, label) {
     const specified = !!op && op !== '指定なし';
     if (!specified || base === null || base === undefined || base === '') {
-      return { specified: specified, ok: true, reason: null };
+      return { specified, ok: true, reason: null };
     }
     const s = String(scan === undefined || scan === null ? '' : scan);
     const b = String(base);
@@ -219,20 +385,20 @@
       case '前部一致':     ok = s.indexOf(b) === 0; break;
       case '後方一致':
       case '後部一致':     ok = s.lastIndexOf(b) === s.length - b.length; break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
+    return { specified, ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeNumber(scanNum, baseNum, op, label) {
     const specified = !!op && op !== '指定なし';
     if (!specified || baseNum === null || baseNum === undefined || baseNum === '' || Number.isNaN(Number(baseNum))) {
-      return { specified: specified, ok: true, reason: null };
+      return { specified, ok: true, reason: null };
     }
     const s = Number(scanNum);
     const b = Number(baseNum);
     if (Number.isNaN(s)) {
-      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:NaN, base:' + b + ')' };
+      return { specified, ok: false, reason: label + ':' + op + ' (scan:NaN, base:' + b + ')' };
     }
     let ok = true;
     switch (op) {
@@ -242,19 +408,19 @@
       case '以下': ok = (s <= b); break;
       case 'より大きい': ok = (s > b); break;
       case '未満': ok = (s < b); break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
+    return { specified, ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
   }
 
   function judgeDateTime(scanIso, baseIso, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified: specified, ok: true, reason: null };
+    if (!specified) return { specified, ok: true, reason: null };
 
     const s = scanIso ? new Date(scanIso) : null;
     const b = baseIso ? new Date(baseIso) : null;
     if (!s || !b) {
-      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
+      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
     }
     let ok = true;
     switch (op) {
@@ -266,19 +432,19 @@
       case '日付が異なる':   ok = !sameYMD(s, b); break;
       case '時間が同じ':     ok = sameHM(s, b); break;
       case '時間が異なる':   ok = !sameHM(s, b); break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
+    return { specified, ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeDate(scanDateStr, baseDateStr, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified: specified, ok: true, reason: null };
+    if (!specified) return { specified, ok: true, reason: null };
 
     const s = scanDateStr ? parseDateLocal(scanDateStr) : null;
     const b = baseDateStr ? parseDateLocal(baseDateStr) : null;
     if (!s || !b) {
-      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
+      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
     }
     const ss = s.getTime();
     const bb = b.getTime();
@@ -288,19 +454,19 @@
       case '以外': ok = (ss !== bb); break;
       case '以降': ok = (ss >= bb); break;
       case '以前': ok = (ss <= bb); break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
+    return { specified, ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeTime(scanMin, baseTimeStr, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified: specified, ok: true, reason: null };
+    if (!specified) return { specified, ok: true, reason: null };
 
     const s = (scanMin === undefined || scanMin === null) ? null : scanMin;
     const b = baseTimeStr ? parseTimeToMin(baseTimeStr) : null;
     if (s === null || b === null) {
-      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:' + s + ', base:' + b + ')' };
+      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + s + ', base:' + b + ')' };
     }
     let ok = true;
     switch (op) {
@@ -308,9 +474,9 @@
       case '以外': ok = (s !== b); break;
       case '以降': ok = (s >= b); break;
       case '以前': ok = (s <= b); break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
+    return { specified, ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
   }
 
   // ===== 1項目（最大5条件）の評価 =====
@@ -409,14 +575,12 @@
       }
     }
 
-    if (agg === null) {
-      agg = true;
-    }
+    if (agg === null) agg = true;
 
     return {
       ok: !configError && agg,
-      reasons: reasons,
-      configError: configError
+      reasons,
+      configError
     };
   }
 
@@ -439,69 +603,50 @@
     }
 
     if (configError) {
-      return { ok: false, reasons: reasons, configError: true };
+      return { ok: false, reasons, configError: true };
     }
-    return { ok: allOk, reasons: reasons, configError: false };
+    return { ok: allOk, reasons, configError: false };
   }
 
   // ===== キー型 SCAN パース =====
+  function extractBetween(str, before, after) {
+    const text = String(str || '');
+    const b = before || '';
+    const a = after || '';
+    const startIdx = b ? text.indexOf(b) : -1;
+    if (startIdx < 0) return null;
+    const from = startIdx + b.length;
+    let end;
+    if (a) {
+      const idx = text.indexOf(a, from);
+      end = idx >= 0 ? idx : text.length;
+    } else {
+      end = text.length;
+    }
+    return text.slice(from, end);
+  }
+
   function parseScan(raw) {
     const text = String(raw || '');
     const trimmed = text.trim();
     if (!trimmed) throw new Error('SCAN が空です');
 
     const fields = CFG.fields || [];
-    const parsed = {
-      raw: text,
-      values: {}
-    };
+    const parsed = { raw: text, values: {} };
 
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
-      const before = field.before || '';
-      const after  = field.after || '';
       const label = field.label || field.name;
+      const before = field.before || (field.key ? (field.key + '=') : '');
+      const after  = field.after || ';';
 
-      if (!before && !after) {
-        continue; // パターン未設定
-      }
+      const segment = extractBetween(trimmed, before, after);
+      if (segment === null || segment === undefined) continue;
 
-      let idx;
-
-      if (before) {
-        idx = text.indexOf(before);
-        if (idx === -1) {
-          // キーが存在しない場合は読み飛ばし
-          continue;
-        }
-        // 重複チェック（同じキーが2回以上出てきたら ERR）
-        const second = text.indexOf(before, idx + before.length);
-        if (second !== -1) {
-          throw new Error('キー "' + label + '" が複数回含まれています');
-        }
-        idx += before.length;
-      } else {
-        idx = 0;
-      }
-
-      let endIdx;
-      if (after) {
-        endIdx = text.indexOf(after, idx);
-        if (endIdx === -1) {
-          endIdx = text.length;
-        }
-      } else {
-        endIdx = text.length;
-      }
-
-      const rawVal = text.slice(idx, endIdx);
-      const t = rawVal.trim();
-      if (!t) {
-        continue; // 空なら値なしとしてスキップ
-      }
+      const t = String(segment).trim();
+      if (!t) continue;
 
       const info = {};
-      const name = field.name;
 
       switch (field.type) {
         case 'text':
@@ -549,30 +694,31 @@
         }
 
         case 'datetime': {
-          const dv = t;
-          let dateStr;
-          let timeStr;
+          const sub = String(t).split(/\s+/);
+          if (sub.length < 2) {
+            throw new Error('日時フィールド "' + label + '" の値が不足しています');
+          }
+          const dateToken = sub[0];
+          const timeToken = sub[1];
+          let dateStr = dateToken;
+          let timeStr = timeToken;
 
-          if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(dv)) {
-            dateStr = dv.slice(0, 10);
-            timeStr = dv.slice(11, 16);
-          } else if (/^\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}$/.test(dv)) {
-            dateStr = dv.slice(0, 10).replace(/\//g, '-');
-            timeStr = dv.slice(11, 16);
-          } else if (/^[0-9]{12}$/.test(dv)) {
-            dateStr = dv.slice(0, 4) + '-' + dv.slice(4, 6) + '-' + dv.slice(6, 8);
-            timeStr = dv.slice(8, 10) + ':' + dv.slice(10, 12);
-          } else {
-            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + dv);
+          if (/^\d{8}$/.test(dateStr)) {
+            dateStr = dateStr.slice(0, 4) + '-' + dateStr.slice(4, 6) + '-' + dateStr.slice(6, 8);
+          } else if (/^\d{4}\/\d{2}\/\d{2}$/.test(dateStr)) {
+            dateStr = dateStr.replace(/\//g, '-');
+          }
+          if (/^\d{4}$/.test(timeStr)) {
+            timeStr = timeStr.slice(0, 2) + ':' + timeStr.slice(2, 4);
           }
 
           if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || !/^\d{2}:\d{2}$/.test(timeStr)) {
-            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + dv);
+            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + t);
           }
 
           const iso = toIsoFromDateTimeParts(dateStr, timeStr);
           if (!iso) {
-            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + dv);
+            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + t);
           }
           info.datetimeIso = iso;
           info.date = dateStr;
@@ -585,13 +731,13 @@
           info.raw = t;
       }
 
-      parsed.values[name] = parsed.values[name] || info;
+      parsed.values[field.name] = parsed.values[field.name] || info;
     }
 
     return parsed;
   }
 
-  // ===== サブテーブル転記 =====
+  // ===== サブテーブル転記・UI などは単純区切り版と同じ =====
   function kintoneCellTypeFromFieldType(fieldType) {
     switch (fieldType) {
       case 'number':   return 'NUMBER';
@@ -646,7 +792,6 @@
     if (!rec[tblCfg.code]) rec[tblCfg.code] = { type: 'SUBTABLE', value: [] };
     const table = rec[tblCfg.code];
 
-    // 先に「全て空の行」を削除（初期行の空欄を消す）
     if (Array.isArray(table.value)) {
       table.value = table.value.filter(function (row) {
         return !isEmptyRow(row.value);
@@ -682,7 +827,6 @@
     table.value.push(row);
   }
 
-  // ===== UI描画 =====
   function buildScanUI() {
     const space = kintone.app.record.getSpaceElement(CFG.spaceId);
     let mount = space;
@@ -743,7 +887,6 @@
         parsed = parseScan(raw);
       } catch (e) {
         status.textContent = 'NG: ' + e.message;
-        // パースエラー時も SCAN を残し、全選択
         input.focus();
         input.select();
         return;
@@ -779,7 +922,7 @@
   }
 `;
 
-    const full = `${header}
+  const source = `${header}
 (function () {
   'use strict';
 
@@ -788,87 +931,63 @@
 ${engine}
 })();
 `;
-    return full;
-  }
+  return source;
+}
 
-  // ========= ウィザード制御 =========
-  function setupKvWizard() {
-    const spaceIdInput     = $('#kv-space-id');
-    const fieldCountInput  = $('#kv-field-count');
-    const tableCodeInput   = $('#kv-table-code');
-    const tableScanAtInput = $('#kv-table-scanat');
-    const tableResultInput = $('#kv-table-result');
-    const tableReasonInput = $('#kv-table-reason');
+// ===== 初期化 =====
+function initKv() {
+  const fieldCountInput = $("kv-field-count");
+  fieldCountInput.addEventListener("change", () => renderKvFields());
 
-    const generateBtn = $('#kv-generate-btn');
-    const downloadBtn = $('#kv-download-btn');
-    const status      = $('#kv-status');
-    const output      = $('#kv-code-output');
+  renderKvFields();
 
-    setupKvFieldsUI();
+  const genBtn = $("kv-generate-btn");
+  const dlBtn  = $("kv-download-btn");
+  const saveBtn= $("kv-save-config-btn");
+  const status = $("kv-status");
+  const output = $("kv-code-output");
 
-    generateBtn.addEventListener('click', function () {
-      const spaceId = (spaceIdInput.value || '').trim() || 'scan_area';
+  genBtn.addEventListener("click", () => {
+    const cfg = collectKvConfigFromUI();
+    const js  = buildKvJs(cfg);
+    output.value = js;
+    status.textContent = "JSコードを生成しました。";
+    dlBtn.disabled = false;
+  });
 
-      let fieldCount = parseInt(fieldCountInput.value, 10);
-      if (Number.isNaN(fieldCount) || fieldCount < 1) fieldCount = 1;
-      if (fieldCount > 20) fieldCount = 20;
+  dlBtn.addEventListener("click", () => {
+    const now = new Date();
+    const y = String(now.getFullYear());
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
+    const filename = `pc-ng-kv-${y}${m}${d}-${hh}${mm}${ss}.js`;
+    downloadJs(filename, $("kv-code-output").value);
+  });
 
-      const fields = [];
-      for (let i = 1; i <= fieldCount; i++) {
-        let name   = ($('#kv-field-' + i + '-name').value  || '').trim();
-        let label  = ($('#kv-field-' + i + '-label').value || '').trim();
-        const type = ($('#kv-field-' + i + '-type').value  || 'text').trim();
-        const key      = ($('#kv-field-' + i + '-key').value     || '').trim();
-        const before   = ($('#kv-field-' + i + '-before').value  || '').trim();
-        const after    = ($('#kv-field-' + i + '-after').value   || '').trim();
-        const tableField = ($('#kv-field-' + i + '-tableField').value || '').trim();
-        const value1   = ($('#kv-field-' + i + '-value1').value  || '').trim();
-        const op1      = ($('#kv-field-' + i + '-op1').value     || '').trim();
-        const value2   = ($('#kv-field-' + i + '-value2').value  || '').trim();
-        const op2      = ($('#kv-field-' + i + '-op2').value     || '').trim();
-        const join1    = ($('#kv-field-' + i + '-join1').value   || '').trim();
+  saveBtn.addEventListener("click", () => {
+    saveKvConfig();
+  });
 
-        if (!name) name = 'f' + i;
-        if (!label) label = name;
+  $("kv-config-select").addEventListener("change", (ev) => {
+    const id = ev.target.value;
+    if (!id || !kvConfigsCache[id]) return;
+    const data = kvConfigsCache[id];
+    if (data.payload) {
+      $("kv-config-name").value = data.name || "";
+      applyKvConfigToUI(data.payload);
+      $("kv-status").textContent = `設定「${data.name || "(無題)"}」を読み込みました。`;
+    }
+  });
 
-        fields.push({
-          name: name,
-          label: label,
-          key: key,
-          before: before,
-          after: after,
-          type: type,
-          tableField: tableField,
-          judge: {
-            valueFields: [value1, value2, '', '', ''],
-            opFields:    [op1,    op2,    '', '', ''],
-            joinFields:  [join1,  '',     '', '', '']
-          }
-        });
-      }
-
-      const cfg = {
-        spaceId: spaceId,
-        fields: fields,
-        table: {
-          code: (tableCodeInput.value || '').trim() || 'scan_table',
-          scanAtField: (tableScanAtInput.value || '').trim() || 'scan_at',
-          resultField: (tableResultInput.value || '').trim() || 'result',
-          reasonField: (tableReasonInput.value || '').trim() || 'reason'
-        }
-      };
-
-      const js = buildKvJs(cfg);
-      output.value = js;
-      status.textContent = 'JSコードを生成しました。';
-      downloadBtn.disabled = false;
-    });
-
-    downloadBtn.addEventListener('click', function () {
-      downloadJs('pc-kv-flex.js', $('#kv-code-output').value);
+  if (window.tanaAuth && typeof window.tanaAuth.onChange === "function") {
+    window.tanaAuth.onChange(() => {
+      refreshKvConfigList();
     });
   }
+  refreshKvConfigList();
+}
 
-  document.addEventListener('DOMContentLoaded', setupKvWizard);
-})();
+document.addEventListener("DOMContentLoaded", initKv);

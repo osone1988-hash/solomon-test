@@ -370,12 +370,36 @@
             内容を確認のうえ、「JSファイルをダウンロード」でファイル保存してください。
           </p>
 
+          <div class="section">
+            <div class="section-title">設定の保存 / 読み込み</div>
+            <div class="field-row">
+              <div class="field medium">
+                <label for="kv-config-name">設定名</label>
+                <input id="kv-config-name" type="text" placeholder="例: 倉庫A キー型" />
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field medium">
+                <label for="kv-config-select">保存済み設定</label>
+                <select id="kv-config-select">
+                  <option value="">（保存済み設定を選択）</option>
+                </select>
+              </div>
+            </div>
+            <p class="section-desc">
+              保存済み設定を選択すると、左側の項目設定が上書きされます。
+            </p>
+          </div>
+
           <div class="buttons-row">
             <button id="kv-generate-btn" class="btn-primary" type="button" data-require-login="true">
               JSコード生成
             </button>
             <button id="kv-download-btn" class="btn-secondary" type="button" data-require-login="true" disabled>
               JSファイルをダウンロード
+            </button>
+            <button id="kv-save-config-btn" class="btn-secondary" type="button" data-require-login="true">
+              設定を保存
             </button>
             <span id="kv-status" class="status-text">未生成</span>
           </div>
@@ -396,7 +420,7 @@
     </footer>
   </div>
 
-  <script src="app-kv.js"></script>
+  <script type="module" src="app-kv.js"></script>
   <script type="module" src="auth.js"></script>
 </body>
 </html>

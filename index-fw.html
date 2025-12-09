@@ -177,7 +177,7 @@
     </h1>
   </header>
 
-  <!-- ログインバー（auth.js が中身を描画） -->
+  <!-- ログインバー -->
   <div id="auth-bar"></div>
 
   <main>
@@ -231,22 +231,36 @@
     </section>
 
     <section class="card">
-      <h2>3. JS 生成 & ダウンロード</h2>
+      <h2>3. JS 生成 & 設定保存 / 読み込み</h2>
+
+      <div class="field-row">
+        <label for="fw-config-name">設定名</label>
+        <input id="fw-config-name" type="text" placeholder="例: 倉庫A 固定長" />
+      </div>
+      <p class="hint">ログイン中のユーザーごとに、固定長の設定を保存します。</p>
 
       <div class="actions">
-        <button type="button" class="primary" id="fw-generate-btn" data-require-login="true">
-          JSコードを生成
-        </button>
-        <button type="button" class="outline" id="fw-download-btn" data-require-login="true" disabled>
-          JSファイルをダウンロード
-        </button>
+        <button type="button" class="primary" id="fw-generate-btn" data-require-login="true">JSコードを生成</button>
+        <button type="button" class="outline" id="fw-download-btn" data-require-login="true" disabled>JSファイルをダウンロード</button>
+        <button type="button" class="outline" id="fw-save-config-btn" data-require-login="true">設定を保存</button>
       </div>
+
+      <div class="field-row">
+        <label for="fw-config-select">保存済み設定</label>
+        <select id="fw-config-select">
+          <option value="">（保存済み設定を選択）</option>
+        </select>
+      </div>
+      <p class="hint">
+        保存済み設定を選択すると、このページの入力内容が上書きされます。
+      </p>
+
       <div class="status-line" id="fw-status">まだ生成されていません。</div>
       <textarea id="fw-code-output" class="code-output" spellcheck="false" placeholder="// ここに生成された文字数区切り型スキャナのJSコードが表示されます"></textarea>
     </section>
   </main>
 
-  <script src="app-fw.js"></script>
+  <script type="module" src="app-fw.js"></script>
   <script type="module" src="auth.js"></script>
 </body>
 </html>

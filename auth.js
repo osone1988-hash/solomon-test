@@ -25,13 +25,13 @@ import {
 // Your web app's Firebase configuration
 // For Firebase JS SDK v7.20.0 and later, measurementId is optional
 const firebaseConfig = {
-  apiKey: "AIzaSyADQlKzZyiGJwajXQ-pfvmEN04r2U4YB_w",
-  authDomain: "qr-scan-service.firebaseapp.com",
-  projectId: "qr-scan-service",
-  storageBucket: "qr-scan-service.firebasestorage.app",
-  messagingSenderId: "555293545036",
-  appId: "1:555293545036:web:3b2d6f906e68e979e5dae9",
-  measurementId: "G-DJEYHX0P42"
+  apiKey: "AIzaSyDxwQavji9G0bl55ue4jdhRkO450Gj_W04",
+  authDomain: "qr-scan-service-std.firebaseapp.com",
+  projectId: "qr-scan-service-std",
+  storageBucket: "qr-scan-service-std.firebasestorage.app",
+  messagingSenderId: "1017855002210",
+  appId: "1:1017855002210:web:562df417b134da0cb0333b",
+  measurementId: "G-PMYY6MTMNZ"
 };
 
 // --- Firebase 初期化 ---

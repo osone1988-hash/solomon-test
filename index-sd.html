@@ -249,7 +249,14 @@
     </section>
 
     <section class="card">
-      <h2>3. JS 生成 & ダウンロード</h2>
+      <h2>3. JS 生成 & 設定の保存 / 読み込み</h2>
+
+      <!-- 設定名 -->
+      <div class="field-row">
+        <label for="simple-config-name">設定名</label>
+        <input id="simple-config-name" type="text" placeholder="例: 倉庫A 単純区切り" />
+      </div>
+      <p class="hint">ログイン中のユーザーごとに、Firestore 上へ設定を保存します。</p>
 
       <div class="actions">
         <button type="button" class="primary" id="simple-generate-btn" data-require-login="true">
@@ -258,13 +265,30 @@
         <button type="button" class="outline" id="simple-download-btn" data-require-login="true" disabled>
           JSファイルをダウンロード
         </button>
+        <button type="button" class="outline" id="simple-save-config-btn" data-require-login="true">
+          設定を保存
+        </button>
       </div>
+
+      <div class="field-row">
+        <label for="simple-config-select">保存済み設定</label>
+        <select id="simple-config-select">
+          <option value="">（保存済み設定を選択）</option>
+        </select>
+      </div>
+      <p class="hint">
+        保存済み設定を選択すると、このページの入力内容が上書きされます。<br />
+        ※ 現状は「単純区切り型」の設定のみ保存・読込対象です。
+      </p>
+
       <div class="status-line" id="simple-status">まだ生成されていません。</div>
       <textarea id="simple-code-output" class="code-output" spellcheck="false" placeholder="// ここに生成されたJSコードが表示されます"></textarea>
     </section>
   </main>
 
-  <script src="app.js"></script>
+  <!-- 単純区切り型ジェネレータ -->
+  <script type="module" src="app.js"></script>
+  <!-- 認証・会員ステータス制御 -->
   <script type="module" src="auth.js"></script>
 </body>
 </html>

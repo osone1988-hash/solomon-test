@@ -1,297 +1,325 @@
 // app.js
-// 単純区切り型の「JS自動生成ツール」
-// - フィールド型は日本語表示（kintone 表記ベース）
-// - 型に応じて tokens は自動決定（日時=2、それ以外=1）
-// - 生成されるJSは「1項目=最大5条件」対応の汎用スキャナ:contentReference[oaicite:1]{index=1}
+// 単純区切り型 QR SCAN JS ジェネレーター
+// - kintone 用ランタイム JS を生成
+// - Firestore にユーザーごとの設定を保存 / 読み込み
 
-(function () {
-  'use strict';
+import {
+  collection,
+  addDoc,
+  getDocs,
+  serverTimestamp
+} from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-  function $(selector) {
-    return document.querySelector(selector);
+const TYPE_OPTIONS = [
+  { value: "text",     label: "文字列 (1行・選択型)" },
+  { value: "number",   label: "数値" },
+  { value: "datetime", label: "日時" },
+  { value: "date",     label: "日付" },
+  { value: "time",     label: "時刻" }
+];
+
+// 項目1〜5のデフォルト（必要に応じて調整）
+const FIELD_PRESETS = {
+  1: { name: "a", label: "a", type: "text",     tableField: "at", value1: "a",  op1: "aj",  value2: "a2", op2: "aj2", join1: "as1" },
+  2: { name: "b", label: "b", type: "number",   tableField: "bt", value1: "b",  op1: "bj",  value2: "b2", op2: "bj2", join1: "bs1" },
+  3: { name: "c", label: "c", type: "datetime", tableField: "ct", value1: "c",  op1: "cj",  value2: "c2", op2: "cj2", join1: "cs1" },
+  4: { name: "d", label: "d", type: "date",     tableField: "dt", value1: "d",  op1: "dj",  value2: "d2", op2: "dj2", join1: "ds1" },
+  5: { name: "e", label: "e", type: "time",     tableField: "et", value1: "e",  op1: "ej",  value2: "e2", op2: "ej2", join1: "es1" }
+};
+
+let configsCache = {}; // {configId: configData}
+
+// ユーティリティ
+function $(id) { return document.getElementById(id); }
+
+function downloadJs(filename, source) {
+  if (!source || !source.trim()) {
+    alert("先に JSコードを生成してください。");
+    return;
   }
+  const blob = new Blob([source], { type: "text/javascript;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
-  function downloadJs(filename, source) {
-    if (!source || !source.trim()) {
-      alert('先に JSコードを生成してください。');
-      return;
-    }
-    const blob = new Blob([source], { type: 'text/javascript;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+// ====== フィールドUI生成 ======
+function makeMiniField(labelText, id, value) {
+  const wrap = document.createElement("div");
+  wrap.className = "mini-field";
+  const lbl = document.createElement("div");
+  lbl.className = "mini-label";
+  lbl.textContent = labelText;
+  const inp = document.createElement("input");
+  inp.type = "text";
+  inp.id = id;
+  inp.value = value || "";
+  wrap.appendChild(lbl);
+  wrap.appendChild(inp);
+  return wrap;
+}
+
+function renderFields(config) {
+  const countInput = $("simple-field-count");
+  let count = parseInt(countInput.value, 10);
+  if (!Number.isFinite(count) || count < 1) count = 1;
+  if (config && Array.isArray(config.fields)) {
+    count = config.fields.length;
   }
+  if (count > 20) count = 20;
+  countInput.value = String(count);
 
-  // ---- 項目UIの生成 ----
-  function setupSimpleFieldsUI() {
-    const fieldCountInput = $('#simple-field-count');
-    const container = $('#simple-fields-container');
+  const container = $("simple-fields-container");
+  container.innerHTML = "";
 
-    // a〜e 用のプリセット（任意）
-    const presets = {
-      1: { name: 'a', label: 'a', type: 'text',     tableField: 'at', value1: 'a',  op1: 'aj',  value2: 'a2', op2: 'aj2', join1: 'as1' },
-      2: { name: 'b', label: 'b', type: 'number',   tableField: 'bt', value1: 'b',  op1: 'bj',  value2: 'b2', op2: 'bj2', join1: 'bs1' },
-      3: { name: 'c', label: 'c', type: 'datetime', tableField: 'ct', value1: 'c',  op1: 'cj',  value2: 'c2', op2: 'cj2', join1: 'cs1' },
-      4: { name: 'd', label: 'd', type: 'date',     tableField: 'dt', value1: 'd',  op1: 'dj',  value2: 'd2', op2: 'dj2', join1: 'ds1' },
-      5: { name: 'e', label: 'e', type: 'time',     tableField: 'et', value1: 'e',  op1: 'ej',  value2: 'e2', op2: 'ej2', join1: 'es1' }
-    };
+  for (let i = 1; i <= count; i++) {
+    const cfgField = config && config.fields && config.fields[i - 1];
+    const preset = FIELD_PRESETS[i] || {};
+    const name   = (cfgField && cfgField.name) || preset.name || `f${i}`;
+    const label  = (cfgField && cfgField.label) || preset.label || name;
+    const type   = (cfgField && cfgField.type) || preset.type || "text";
+    const tableField = (cfgField && cfgField.tableField) || preset.tableField || "";
 
-    // UIに見せる型（表示ラベルと値）
-    const TYPE_OPTIONS = [
-      { value: 'text',      label: '文字列 (1行)' },
-      { value: 'number',    label: '数値' },
-      { value: 'datetime',  label: '日時' },
-      { value: 'date',      label: '日付' },
-      { value: 'time',      label: '時刻' },
-      { value: 'dropdown',  label: 'ドロップダウン' },
-      { value: 'radio',     label: 'ラジオボタン' },
-      { value: 'checkbox',  label: 'チェックボックス' }
-    ];
+    const judge = (cfgField && cfgField.judge) || {};
+    const value1 = (judge.valueFields && judge.valueFields[0]) || preset.value1 || "";
+    const op1    = (judge.opFields    && judge.opFields[0])    || preset.op1    || "";
+    const value2 = (judge.valueFields && judge.valueFields[1]) || preset.value2 || "";
+    const op2    = (judge.opFields    && judge.opFields[1])    || preset.op2    || "";
+    const join1  = (judge.joinFields  && judge.joinFields[0])  || preset.join1  || "";
 
-    function renderFields() {
-      let count = parseInt(fieldCountInput.value, 10);
-      if (Number.isNaN(count) || count < 1) count = 1;
-      if (count > 20) count = 20;
-      fieldCountInput.value = String(count);
+    const group = document.createElement("div");
+    group.className = "field-group";
 
-      container.innerHTML = '';
+    const title = document.createElement("div");
+    title.className = "field-group-title";
+    title.textContent = `項目 ${i}`;
+    group.appendChild(title);
 
-      for (let i = 1; i <= count; i++) {
-        const preset = presets[i] || {};
-        const group = document.createElement('div');
-        group.className = 'field-group';
+    const grid1 = document.createElement("div");
+    grid1.className = "field-group-grid";
 
-        const title = document.createElement('div');
-        title.className = 'field-group-title';
-        title.textContent = '項目 ' + i;
-        group.appendChild(title);
+    // 論理名
+    grid1.appendChild(makeMiniField("論理名 (name)", `simple-field-${i}-name`, name));
+    // ラベル
+    grid1.appendChild(makeMiniField("ラベル (エラー表示用)", `simple-field-${i}-label`, label));
 
-        const grid1 = document.createElement('div');
-        grid1.className = 'field-group-grid';
+    // 型
+    const typeWrap = document.createElement("div");
+    typeWrap.className = "mini-field";
+    const typeLbl = document.createElement("div");
+    typeLbl.className = "mini-label";
+    typeLbl.textContent = "型（kintone フィールド型）";
+    const typeSel = document.createElement("select");
+    typeSel.id = `simple-field-${i}-type`;
+    TYPE_OPTIONS.forEach(opt => {
+      const o = document.createElement("option");
+      o.value = opt.value;
+      o.textContent = opt.label;
+      if (opt.value === type) o.selected = true;
+      typeSel.appendChild(o);
+    });
+    typeWrap.appendChild(typeLbl);
+    typeWrap.appendChild(typeSel);
+    grid1.appendChild(typeWrap);
 
-        // 論理名 (name)
-        const fName = document.createElement('div');
-        fName.className = 'mini-field';
-        const lblName = document.createElement('span');
-        lblName.className = 'mini-label';
-        lblName.textContent = '論理名 (name)';
-        const inputName = document.createElement('input');
-        inputName.type = 'text';
-        inputName.id = 'simple-field-' + i + '-name';
-        inputName.value = preset.name || '';
-        fName.appendChild(lblName);
-        fName.appendChild(inputName);
-        grid1.appendChild(fName);
+    // テーブル列
+    grid1.appendChild(makeMiniField("テーブル列フィールドコード", `simple-field-${i}-tableField`, tableField));
 
-        // ラベル（エラー表示などに使用）
-        const fLabel = document.createElement('div');
-        fLabel.className = 'mini-field';
-        const lblLabel = document.createElement('span');
-        lblLabel.className = 'mini-label';
-        lblLabel.textContent = 'ラベル (エラー表示用)';
-        const inputLabel = document.createElement('input');
-        inputLabel.type = 'text';
-        inputLabel.id = 'simple-field-' + i + '-label';
-        inputLabel.value = preset.label || '';
-        fLabel.appendChild(lblLabel);
-        fLabel.appendChild(inputLabel);
-        grid1.appendChild(fLabel);
+    group.appendChild(grid1);
 
-        // 型（日本語ラベル）
-        const fType = document.createElement('div');
-        fType.className = 'mini-field';
-        const lblType = document.createElement('span');
-        lblType.className = 'mini-label';
-        lblType.textContent = '型（kintone フィールド種別）';
-        const selType = document.createElement('select');
-        selType.id = 'simple-field-' + i + '-type';
-        TYPE_OPTIONS.forEach((optDef) => {
-          const opt = document.createElement('option');
-          opt.value = optDef.value;
-          opt.textContent = optDef.label;
-          // プリセット型にマッチさせる（text/number/datetime/date/time）
-          if (preset.type && preset.type === optDef.value) {
-            opt.selected = true;
-          }
-          selType.appendChild(opt);
-        });
-        fType.appendChild(lblType);
-        fType.appendChild(selType);
-        grid1.appendChild(fType);
+    const subTitle = document.createElement("div");
+    subTitle.style.marginTop = "6px";
+    subTitle.style.fontSize = "12px";
+    subTitle.style.color = "#4b5563";
+    subTitle.textContent = "判定用フィールド (現在は最大2条件。内部は5条件まで拡張可能)";
+    group.appendChild(subTitle);
 
-        // テーブル転記先
-        const fTable = document.createElement('div');
-        fTable.className = 'mini-field';
-        const lblTable = document.createElement('span');
-        lblTable.className = 'mini-label';
-        lblTable.textContent = 'テーブル列フィールドコード';
-        const inputTable = document.createElement('input');
-        inputTable.type = 'text';
-        inputTable.id = 'simple-field-' + i + '-tableField';
-        inputTable.value = preset.tableField || '';
-        fTable.appendChild(lblTable);
-        fTable.appendChild(inputTable);
-        grid1.appendChild(fTable);
+    const grid2 = document.createElement("div");
+    grid2.className = "field-group-grid";
 
-        group.appendChild(grid1);
+    grid2.appendChild(makeMiniField("値1フィールドコード",   `simple-field-${i}-value1`, value1));
+    grid2.appendChild(makeMiniField("条件1フィールドコード", `simple-field-${i}-op1`,    op1));
+    grid2.appendChild(makeMiniField("値2フィールドコード",   `simple-field-${i}-value2`, value2));
+    grid2.appendChild(makeMiniField("条件2フィールドコード", `simple-field-${i}-op2`,    op2));
+    grid2.appendChild(makeMiniField("AND/OR フィールドコード", `simple-field-${i}-join1`, join1));
 
-        // 判定フィールド（とりあえず2条件分）
-        const subtitle = document.createElement('div');
-        subtitle.style.marginTop = '6px';
-        subtitle.style.fontSize = '12px';
-        subtitle.style.color = '#4b5563';
-        subtitle.textContent = '判定用フィールド (現在は2条件まで使用。内部的には5条件まで拡張可)';
-        group.appendChild(subtitle);
+    group.appendChild(grid2);
+    container.appendChild(group);
+  }
+}
 
-        const grid2 = document.createElement('div');
-        grid2.className = 'field-group-grid';
+// ====== UI → 設定オブジェクト ======
+function collectConfigFromUI() {
+  const spaceId   = $("simple-space-id").value.trim() || "scan_area";
+  const delimiter = $("simple-delimiter").value.trim() || "/\\s+/";
+  const tableCode = $("simple-table-code").value.trim() || "scan_table";
+  const scanAt    = $("simple-table-scanat").value.trim() || "scan_at";
+  const result    = $("simple-table-result").value.trim() || "result";
+  const reason    = $("simple-table-reason").value.trim() || "reason";
 
-        // 値1
-        const v1 = document.createElement('div');
-        v1.className = 'mini-field';
-        const lblV1 = document.createElement('span');
-        lblV1.className = 'mini-label';
-        lblV1.textContent = '値1フィールドコード';
-        const inputV1 = document.createElement('input');
-        inputV1.type = 'text';
-        inputV1.id = 'simple-field-' + i + '-value1';
-        inputV1.value = preset.value1 || '';
-        v1.appendChild(lblV1);
-        v1.appendChild(inputV1);
-        grid2.appendChild(v1);
+  let fieldCount  = parseInt($("simple-field-count").value, 10);
+  if (!Number.isFinite(fieldCount) || fieldCount < 1) fieldCount = 1;
+  if (fieldCount > 20) fieldCount = 20;
 
-        // 条件1
-        const o1 = document.createElement('div');
-        o1.className = 'mini-field';
-        const lblO1 = document.createElement('span');
-        lblO1.className = 'mini-label';
-        lblO1.textContent = '条件1フィールドコード';
-        const inputO1 = document.createElement('input');
-        inputO1.type = 'text';
-        inputO1.id = 'simple-field-' + i + '-op1';
-        inputO1.value = preset.op1 || '';
-        o1.appendChild(lblO1);
-        o1.appendChild(inputO1);
-        grid2.appendChild(o1);
+  const fields = [];
+  for (let i = 1; i <= fieldCount; i++) {
+    const name  = ($(`simple-field-${i}-name`).value || "").trim() || `f${i}`;
+    const label = ($(`simple-field-${i}-label`).value || "").trim() || name;
+    const type  = ($(`simple-field-${i}-type`).value || "text").trim();
+    const tableField = ($(`simple-field-${i}-tableField`).value || "").trim();
 
-        // 値2
-        const v2 = document.createElement('div');
-        v2.className = 'mini-field';
-        const lblV2 = document.createElement('span');
-        lblV2.className = 'mini-label';
-        lblV2.textContent = '値2フィールドコード';
-        const inputV2 = document.createElement('input');
-        inputV2.type = 'text';
-        inputV2.id = 'simple-field-' + i + '-value2';
-        inputV2.value = preset.value2 || '';
-        v2.appendChild(lblV2);
-        v2.appendChild(inputV2);
-        grid2.appendChild(v2);
+    const value1 = ($(`simple-field-${i}-value1`).value || "").trim();
+    const op1    = ($(`simple-field-${i}-op1`).value || "").trim();
+    const value2 = ($(`simple-field-${i}-value2`).value || "").trim();
+    const op2    = ($(`simple-field-${i}-op2`).value || "").trim();
+    const join1  = ($(`simple-field-${i}-join1`).value || "").trim();
 
-        // 条件2
-        const o2 = document.createElement('div');
-        o2.className = 'mini-field';
-        const lblO2 = document.createElement('span');
-        lblO2.className = 'mini-label';
-        lblO2.textContent = '条件2フィールドコード';
-        const inputO2 = document.createElement('input');
-        inputO2.type = 'text';
-        inputO2.id = 'simple-field-' + i + '-op2';
-        inputO2.value = preset.op2 || '';
-        o2.appendChild(lblO2);
-        o2.appendChild(inputO2);
-        grid2.appendChild(o2);
-
-        // AND/OR フィールド
-        const j1 = document.createElement('div');
-        j1.className = 'mini-field';
-        const lblJ1 = document.createElement('span');
-        lblJ1.className = 'mini-label';
-        lblJ1.textContent = 'AND/OR フィールドコード';
-        const inputJ1 = document.createElement('input');
-        inputJ1.type = 'text';
-        inputJ1.id = 'simple-field-' + i + '-join1';
-        inputJ1.value = preset.join1 || '';
-        j1.appendChild(lblJ1);
-        j1.appendChild(inputJ1);
-        grid2.appendChild(j1);
-
-        group.appendChild(grid2);
-
-        container.appendChild(group);
+    fields.push({
+      name,
+      label,
+      type,
+      tokenCount: type === "datetime" ? 2 : 1,
+      tableField,
+      judge: {
+        label,
+        valueFields: [value1, value2, "", "", ""],
+        opFields:    [op1,    op2,    "", "", ""],
+        joinFields:  [join1,  "",     "", "", ""]
       }
-    }
-
-    fieldCountInput.addEventListener('change', renderFields);
-    renderFields();
+    });
   }
 
-  // ---- JS 生成（単純区切り 汎用エンジン版） ----
-  function buildSimpleJs(config) {
-    // delimiter 行
-    let delimiterLine;
-    if (config.delimiterIsRegex) {
-      delimiterLine = '    delimiter: ' + config.delimiterRaw + ',';
-    } else {
-      delimiterLine = '    delimiter: ' + JSON.stringify(config.delimiterRaw) + ',';
+  return {
+    version: 1,
+    mode: "simple",
+    spaceId,
+    delimiter,
+    fields,
+    table: {
+      code: tableCode,
+      scanAtField: scanAt,
+      resultField: result,
+      reasonField: reason
     }
+  };
+}
 
-    // fields 部分
-    const fieldsLines = config.fields.map((f) => {
-      return [
-        '      {',
-        '        name: ' + JSON.stringify(f.name) + ',',
-        '        label: ' + JSON.stringify(f.label) + ',',
-        '        type: ' + JSON.stringify(f.type) + ',',
-        '        tokens: ' + f.tokens + ',',
-        '        tableField: ' + JSON.stringify(f.tableField) + ',',
-        '        judge: {',
-        '          valueFields: ' + JSON.stringify(f.judge.valueFields) + ',',
-        '          opFields: ' + JSON.stringify(f.judge.opFields) + ',',
-        '          joinFields: ' + JSON.stringify(f.judge.joinFields) + ',',
-        '        },',
-        '      }'
-      ].join('\n');
-    }).join(',\n');
+// ====== 設定オブジェクト → UI ======
+function applyConfigToUI(cfg) {
+  if (!cfg) return;
 
-    const tableLines = [
-      '    table: {',
-      '      code: ' + JSON.stringify(config.table.code) + ',',
-      '      scanAtField: ' + JSON.stringify(config.table.scanAtField) + ',',
-      '      resultField: ' + JSON.stringify(config.table.resultField) + ',',
-      '      reasonField: ' + JSON.stringify(config.table.reasonField) + ',',
-      '    },'
-    ].join('\n');
+  $("simple-space-id").value   = cfg.spaceId || "scan_area";
+  $("simple-delimiter").value  = cfg.delimiter || "/\\s+/";
+  $("simple-table-code").value = (cfg.table && cfg.table.code) || "scan_table";
+  $("simple-table-scanat").value = (cfg.table && cfg.table.scanAtField) || "scan_at";
+  $("simple-table-result").value = (cfg.table && cfg.table.resultField) || "result";
+  $("simple-table-reason").value = (cfg.table && cfg.table.reasonField) || "reason";
 
-    const header = [
-      '// Generated by QR Config Tool',
-      '// Mode: simple-delimiter (flex fields, max 20 fields, each up to 5 conditions)',
-      '// Generated at: ' + new Date().toISOString(),
-      ''
-    ].join('\n');
+  $("simple-field-count").value =
+    cfg.fields && cfg.fields.length ? String(cfg.fields.length) : "1";
 
-    const cfgBlock = [
-      '(function () {',
-      "  'use strict';",
-      '',
-      '  const CFG = {',
-      '    spaceId: ' + JSON.stringify(config.spaceId) + ',',
-      delimiterLine,
-      '    fields: [',
-      fieldsLines,
-      '    ],',
-      tableLines,
-      '  };',
-      ''
-    ].join('\n');
+  renderFields(cfg);
+}
 
-    // 汎用エンジン本体（前回と同じ）:contentReference[oaicite:2]{index=2}
-    const engine = `  const val = (rec, code) => (code && rec[code] ? rec[code].value : '');
+// ====== Firestore: 設定保存・取得 ======
+async function refreshConfigList() {
+  const select = $("simple-config-select");
+  if (!select) return;
+
+  const auth = window.tanaAuth;
+  const user = auth && auth.currentUser;
+  const db   = auth && auth.db;
+  if (!user || !db) {
+    select.innerHTML = '<option value="">（ログインが必要です）</option>';
+    configsCache = {};
+    return;
+  }
+
+  select.innerHTML = '<option value="">（保存済み設定を選択）</option>';
+  configsCache = {};
+
+  try {
+    const colRef = collection(db, "users", user.uid, "configs");
+    const snap = await getDocs(colRef);
+    snap.forEach(docSnap => {
+      const data = docSnap.data();
+      if (!data || data.mode !== "simple" || !data.payload) return;
+      configsCache[docSnap.id] = data;
+      const opt = document.createElement("option");
+      opt.value = docSnap.id;
+      opt.textContent = data.name || "(無題)";
+      select.appendChild(opt);
+    });
+  } catch (e) {
+    console.error("設定一覧取得エラー:", e);
+    select.innerHTML = '<option value="">（設定の取得に失敗しました）</option>';
+  }
+}
+
+async function saveCurrentConfig() {
+  const statusEl = $("simple-status");
+  const auth = window.tanaAuth;
+  const user = auth && auth.currentUser;
+  const db   = auth && auth.db;
+
+  if (!user || !db) {
+    alert("設定を保存するにはログインが必要です。");
+    return;
+  }
+
+  const nameInput = $("simple-config-name");
+  const name = (nameInput.value || "").trim() || "無題";
+
+  const payload = collectConfigFromUI();
+
+  try {
+    const colRef = collection(db, "users", user.uid, "configs");
+    await addDoc(colRef, {
+      name,
+      mode: "simple",
+      payload,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp()
+    });
+    statusEl.textContent = `設定「${name}」を保存しました。`;
+    await refreshConfigList();
+  } catch (e) {
+    console.error("設定保存エラー:", e);
+    statusEl.textContent = "設定の保存に失敗しました。コンソールを確認してください。";
+  }
+}
+
+// ====== ランタイム JS 生成 ======
+function buildSimpleJs(config) {
+  const header = [
+    "// Generated by QR Config Tool",
+    "// Mode: simple-delimiter (max 20 fields, up to 5 conditions each)",
+    "// Generated at: " + new Date().toISOString(),
+    ""
+  ].join("\n");
+
+  const cfgJson = JSON.stringify({
+    spaceId: config.spaceId,
+    fields: config.fields,
+    table: config.table
+  }, null, 2);
+
+  // 区切り文字は /.../ 形式ならそのまま、そうでなければ文字列リテラルにする
+  const delimRaw = config.delimiter || "/\\s+/";
+  let delimLiteral;
+  if (/^\/.*\/[gimsuy]*$/.test(delimRaw)) {
+    delimLiteral = delimRaw;
+  } else {
+    delimLiteral = JSON.stringify(delimRaw);
+  }
+
+  const engine = String.raw`
+  const val = (rec, code) => (code && rec[code] ? rec[code].value : '');
   const nz  = (s) => String(s === undefined || s === null ? '' : s).trim() !== '';
 
   function nowIso() { return new Date().toISOString(); }
@@ -300,10 +328,10 @@
     if (!hhmmOrHHmm) return null;
     const s = String(hhmmOrHHmm);
     let h, m;
-    if (/^\\d{2}:\\d{2}$/.test(s)) {
+    if (/^\d{2}:\d{2}$/.test(s)) {
       h = Number(s.slice(0, 2));
       m = Number(s.slice(3, 5));
-    } else if (/^\\d{4}$/.test(s)) {
+    } else if (/^\d{4}$/.test(s)) {
       h = Number(s.slice(0, 2));
       m = Number(s.slice(2, 4));
     } else {
@@ -336,21 +364,11 @@
     return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
   }
 
-  function tokenizeScan(text) {
-    const delim = CFG.delimiter;
-    if (delim instanceof RegExp) {
-      return text.split(delim).filter(function (t) { return t.length > 0; });
-    }
-    if (typeof delim === 'string' && delim.length > 0) {
-      return text.split(delim).filter(function (t) { return t.length > 0; });
-    }
-    return text.split(/\\s+/).filter(function (t) { return t.length > 0; });
-  }
-
+  // ===== 判定関数 =====
   function judgeText(scan, base, op, label) {
     const specified = !!op && op !== '指定なし';
     if (!specified || base === null || base === undefined || base === '') {
-      return { specified: specified, ok: true, reason: null };
+      return { specified, ok: true, reason: null };
     }
     const s = String(scan === undefined || scan === null ? '' : scan);
     const b = String(base);
@@ -363,20 +381,20 @@
       case '前部一致':     ok = s.indexOf(b) === 0; break;
       case '後方一致':
       case '後部一致':     ok = s.lastIndexOf(b) === s.length - b.length; break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
+    return { specified, ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeNumber(scanNum, baseNum, op, label) {
     const specified = !!op && op !== '指定なし';
     if (!specified || baseNum === null || baseNum === undefined || baseNum === '' || Number.isNaN(Number(baseNum))) {
-      return { specified: specified, ok: true, reason: null };
+      return { specified, ok: true, reason: null };
     }
     const s = Number(scanNum);
     const b = Number(baseNum);
     if (Number.isNaN(s)) {
-      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:NaN, base:' + b + ')' };
+      return { specified, ok: false, reason: label + ':' + op + ' (scan:NaN, base:' + b + ')' };
     }
     let ok = true;
     switch (op) {
@@ -386,19 +404,19 @@
       case '以下': ok = (s <= b); break;
       case 'より大きい': ok = (s > b); break;
       case '未満': ok = (s < b); break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
+    return { specified, ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
   }
 
   function judgeDateTime(scanIso, baseIso, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified: specified, ok: true, reason: null };
+    if (!specified) return { specified, ok: true, reason: null };
 
     const s = scanIso ? new Date(scanIso) : null;
     const b = baseIso ? new Date(baseIso) : null;
     if (!s || !b) {
-      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
+      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
     }
     let ok = true;
     switch (op) {
@@ -410,19 +428,19 @@
       case '日付が異なる':   ok = !sameYMD(s, b); break;
       case '時間が同じ':     ok = sameHM(s, b); break;
       case '時間が異なる':   ok = !sameHM(s, b); break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
+    return { specified, ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeDate(scanDateStr, baseDateStr, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified: specified, ok: true, reason: null };
+    if (!specified) return { specified, ok: true, reason: null };
 
     const s = scanDateStr ? parseDateLocal(scanDateStr) : null;
     const b = baseDateStr ? parseDateLocal(baseDateStr) : null;
     if (!s || !b) {
-      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
+      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
     }
     const ss = s.getTime();
     const bb = b.getTime();
@@ -432,19 +450,19 @@
       case '以外': ok = (ss !== bb); break;
       case '以降': ok = (ss >= bb); break;
       case '以前': ok = (ss <= bb); break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
+    return { specified, ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeTime(scanMin, baseTimeStr, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified: specified, ok: true, reason: null };
+    if (!specified) return { specified, ok: true, reason: null };
 
     const s = (scanMin === undefined || scanMin === null) ? null : scanMin;
     const b = baseTimeStr ? parseTimeToMin(baseTimeStr) : null;
     if (s === null || b === null) {
-      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:' + s + ', base:' + b + ')' };
+      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + s + ', base:' + b + ')' };
     }
     let ok = true;
     switch (op) {
@@ -452,11 +470,12 @@
       case '以外': ok = (s !== b); break;
       case '以降': ok = (s >= b); break;
       case '以前': ok = (s <= b); break;
-      default: return { specified: specified, ok: true, reason: null };
+      default: return { specified, ok: true, reason: null };
     }
-    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
+    return { specified, ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
   }
 
+  // ===== 1項目（最大5条件）の評価 =====
   function evaluateFieldConditions(rec, parsed, fieldDef) {
     const judgeCfg = fieldDef.judge || {};
     const valueFields = judgeCfg.valueFields || [];
@@ -552,14 +571,12 @@
       }
     }
 
-    if (agg === null) {
-      agg = true;
-    }
+    if (agg === null) agg = true;
 
     return {
       ok: !configError && agg,
-      reasons: reasons,
-      configError: configError
+      reasons,
+      configError
     };
   }
 
@@ -582,71 +599,118 @@
     }
 
     if (configError) {
-      return { ok: false, reasons: reasons, configError: true };
+      return { ok: false, reasons, configError: true };
     }
-    return { ok: allOk, reasons: reasons, configError: false };
+    return { ok: allOk, reasons, configError: false };
+  }
+
+  // ===== 単純区切り型 SCAN パース =====
+  function splitTokens(text) {
+    if (DELIM instanceof RegExp) {
+      return text.split(DELIM);
+    }
+    return text.split(String(DELIM));
   }
 
   function parseScan(raw) {
-    const text = String(raw || '').trim();
-    if (!text) throw new Error('SCAN が空です');
+    const text = String(raw || '');
+    const trimmed = text.trim();
+    if (!trimmed) throw new Error('SCAN が空です');
 
-    const tokens = tokenizeScan(text);
+    const tokens = splitTokens(trimmed);
     const fields = CFG.fields || [];
-
-    let minTokens = 0;
-    for (let i = 0; i < fields.length; i++) {
-      const f = fields[i];
-      minTokens += f.tokens || 1;
-    }
-    if (tokens.length < minTokens) {
-      throw new Error('SCAN トークン数が不足しています（必要:' + minTokens + '個 / 実際:' + tokens.length + '個）');
-    }
+    const parsed = { raw: text, values: {} };
 
     let idx = 0;
-    const parsed = {
-      raw: text,
-      values: {}
-    };
 
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
-      const n = field.tokens || 1;
-      const slice = tokens.slice(idx, idx + n);
-      idx += n;
-      const joined = slice.join(' ');
+      const label = field.label || field.name;
+      const tokenCount = field.tokenCount || (field.type === 'datetime' ? 2 : 1);
+
+      const part = tokens.slice(idx, idx + tokenCount);
+      idx += tokenCount;
+
+      if (part.length < tokenCount) {
+        throw new Error('トークン数が不足しています（' + label + '）');
+      }
+
+      const joined = part.join(' ');
+      const t = joined.trim();
+      if (!t) continue;
 
       const info = {};
-      const name = field.name;
 
       switch (field.type) {
         case 'text':
-          info.text = joined;
+          info.text = t;
           break;
+
         case 'number': {
-          const num = Number(joined);
+          const num = Number(t);
           if (Number.isNaN(num)) {
-            throw new Error('数値トークンが不正です (' + name + '="' + joined + '")');
+            throw new Error('数値フィールド "' + label + '" の値が不正です: ' + t);
           }
           info.number = num;
           break;
         }
-        case 'datetime': {
-          let dateStr, timeStr;
-          if (slice.length === 2) {
-            dateStr = slice[0];
-            timeStr = slice[1];
-          } else {
-            const m = /^([0-9]{4}-[0-9]{2}-[0-9]{2})\\s+([0-9]{2}:[0-9]{2})$/.exec(joined);
-            if (!m) {
-              throw new Error('日時トークンが不正です (' + name + '="' + joined + '")');
-            }
-            dateStr = m[1];
-            timeStr = m[2];
+
+        case 'date': {
+          let d = t;
+          if (/^\d{8}$/.test(d)) {
+            d = d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8);
+          } else if (/^\d{4}\/\d{2}\/\d{2}$/.test(d)) {
+            d = d.replace(/\//g, '-');
           }
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+            throw new Error('日付フィールド "' + label + '" の値が不正です: ' + t);
+          }
+          info.date = d;
+          break;
+        }
+
+        case 'time': {
+          let tm = t;
+          if (/^\d{4}$/.test(tm)) {
+            tm = tm.slice(0, 2) + ':' + tm.slice(2, 4);
+          }
+          if (!/^\d{2}:\d{2}$/.test(tm)) {
+            throw new Error('時刻フィールド "' + label + '" の値が不正です: ' + t);
+          }
+          const min = parseTimeToMin(tm);
+          if (min === null) {
+            throw new Error('時刻フィールド "' + label + '" の値が不正です: ' + t);
+          }
+          info.time = tm;
+          info.minutes = min;
+          break;
+        }
+
+        case 'datetime': {
+          if (part.length < 2) {
+            throw new Error('日時フィールド "' + label + '" の値が不足しています');
+          }
+          const dateToken = String(part[0]).trim();
+          const timeToken = String(part[1]).trim();
+          let dateStr = dateToken;
+          let timeStr = timeToken;
+
+          if (/^\d{8}$/.test(dateStr)) {
+            dateStr = dateStr.slice(0, 4) + '-' + dateStr.slice(4, 6) + '-' + dateStr.slice(6, 8);
+          } else if (/^\d{4}\/\d{2}\/\d{2}$/.test(dateStr)) {
+            dateStr = dateStr.replace(/\//g, '-');
+          }
+          if (/^\d{4}$/.test(timeStr)) {
+            timeStr = timeStr.slice(0, 2) + ':' + timeStr.slice(2, 4);
+          }
+
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || !/^\d{2}:\d{2}$/.test(timeStr)) {
+            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + t);
+          }
+
           const iso = toIsoFromDateTimeParts(dateStr, timeStr);
           if (!iso) {
-            throw new Error('日時トークンが不正です (' + name + '="' + joined + '")');
+            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + t);
           }
           info.datetimeIso = iso;
           info.date = dateStr;
@@ -654,40 +718,18 @@
           info.minutes = parseTimeToMin(timeStr);
           break;
         }
-        case 'date': {
-          const d = joined;
-          if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d)) {
-            throw new Error('日付トークンが不正です (' + name + '="' + d + '")');
-          }
-          info.date = d;
-          break;
-        }
-        case 'time': {
-          let t = joined;
-          if (/^\\d{4}$/.test(t)) {
-            t = t.slice(0, 2) + ':' + t.slice(2, 4);
-          }
-          if (!/^\\d{2}:\\d{2}$/.test(t)) {
-            throw new Error('時刻トークンが不正です (' + name + '="' + t + '")');
-          }
-          const min = parseTimeToMin(t);
-          if (min === null) {
-            throw new Error('時刻トークンが不正です (' + name + '="' + t + '")');
-          }
-          info.time = t;
-          info.minutes = min;
-          break;
-        }
+
         default:
-          info.raw = joined;
+          info.raw = t;
       }
 
-      parsed.values[name] = info;
+      parsed.values[field.name] = parsed.values[field.name] || info;
     }
 
     return parsed;
   }
 
+  // ===== サブテーブル転記 =====
   function kintoneCellTypeFromFieldType(fieldType) {
     switch (fieldType) {
       case 'number':   return 'NUMBER';
@@ -718,12 +760,37 @@
     }
   }
 
+  function isEmptyRow(rowValue) {
+    if (!rowValue) return true;
+    const keys = Object.keys(rowValue);
+    if (!keys.length) return true;
+    for (let i = 0; i < keys.length; i++) {
+      const cell = rowValue[keys[i]];
+      if (!cell) continue;
+      const v = cell.value;
+      if (Array.isArray(v)) {
+        if (v.length > 0) return false;
+      } else {
+        if (v !== '' && v !== null && v !== undefined) return false;
+      }
+    }
+    return true;
+  }
+
   function appendRow(appRec, parsed, evalRes) {
     const rec = appRec.record;
     const tblCfg = CFG.table;
 
     if (!rec[tblCfg.code]) rec[tblCfg.code] = { type: 'SUBTABLE', value: [] };
     const table = rec[tblCfg.code];
+
+    if (Array.isArray(table.value)) {
+      table.value = table.value.filter(function (row) {
+        return !isEmptyRow(row.value);
+      });
+    } else {
+      table.value = [];
+    }
 
     const row = { value: {} };
 
@@ -733,8 +800,7 @@
     for (let i = 0; i < fields.length; i++) {
       const field = fields[i];
       if (!field.tableField) continue;
-      const infoMap = parsed.values || {};
-      const info = infoMap[field.name];
+      const info = (parsed.values || {})[field.name];
       const cellType = kintoneCellTypeFromFieldType(field.type);
       const v = extractValueForTable(field, info);
       row.value[field.tableField] = { type: cellType, value: v };
@@ -753,12 +819,13 @@
     table.value.push(row);
   }
 
+  // ===== UI描画 =====
   function buildScanUI() {
     const space = kintone.app.record.getSpaceElement(CFG.spaceId);
     let mount = space;
     if (!mount) {
       mount = document.createElement('div');
-      mount.id = 'tana-scan-fallback';
+      mount.id = 'tana-scan-simple-fallback';
       document.body.appendChild(mount);
     }
     while (mount.firstChild) mount.removeChild(mount.firstChild);
@@ -790,7 +857,7 @@
     row2.style.marginTop = '4px';
     row2.style.fontSize = '12px';
     row2.style.color = '#666';
-    row2.textContent = 'SCAN 文字列を入力して Enter';
+    row2.textContent = '単純区切りの SCAN 文字列を入力して Enter（例: TEST 10 2025-11-14 00:00 …）';
 
     wrap.appendChild(row1);
     wrap.appendChild(row2);
@@ -806,12 +873,15 @@
       if (ev.key !== 'Enter') return;
       ev.preventDefault();
 
+      const raw = input.value;
       const appRec = kintone.app.record.get();
       let parsed;
       try {
-        parsed = parseScan(input.value);
+        parsed = parseScan(raw);
       } catch (e) {
         status.textContent = 'NG: ' + e.message;
+        input.focus();
+        input.select();
         return;
       }
 
@@ -821,127 +891,99 @@
 
       if (evalRes.configError) {
         status.textContent = 'ERR (設定エラー)';
+        input.value = raw;
+        input.focus();
+        input.select();
+      } else if (!evalRes.ok) {
+        status.textContent = 'NG';
+        input.value = raw;
+        input.focus();
+        input.select();
       } else {
-        status.textContent = evalRes.ok ? 'OK' : 'NG';
+        status.textContent = 'OK';
+        input.value = '';
+        input.focus();
       }
-
-      input.value = '';
-      input.focus();
     });
   }
 
-  kintone.events.on(['app.record.create.show', 'app.record.edit.show'], function (event) {
-    buildScanUI();
-    return event;
-  });
-
-})();`;
-
-    return header + '\n' + cfgBlock + engine + '\n';
-  }
-
-  // ---- 単純区切りウィザード ----
-  function setupSimpleWizard() {
-    const spaceIdInput = $('#simple-space-id');
-    const delimiterInput = $('#simple-delimiter');
-    const fieldCountInput = $('#simple-field-count');
-    const tableCodeInput = $('#simple-table-code');
-    const tableScanAtInput = $('#simple-table-scanat');
-    const tableResultInput = $('#simple-table-result');
-    const tableReasonInput = $('#simple-table-reason');
-
-    const generateBtn = $('#simple-generate-btn');
-    const downloadBtn = $('#simple-download-btn');
-    const status = $('#simple-status');
-    const output = $('#simple-code-output');
-
-    setupSimpleFieldsUI();
-
-    generateBtn.addEventListener('click', function () {
-      const spaceId = (spaceIdInput.value || '').trim() || 'scan_area';
-
-      let delimiterRaw = (delimiterInput.value || '').trim();
-      if (!delimiterRaw) delimiterRaw = '/\\s+/';
-      let delimiterIsRegex = false;
-      if (delimiterRaw.length >= 2 && delimiterRaw.charAt(0) === '/' && delimiterRaw.lastIndexOf('/') > 0) {
-        delimiterIsRegex = true;
-      }
-
-      let fieldCount = parseInt(fieldCountInput.value, 10);
-      if (Number.isNaN(fieldCount) || fieldCount < 1) fieldCount = 1;
-      if (fieldCount > 20) fieldCount = 20;
-
-      const fields = [];
-      for (let i = 1; i <= fieldCount; i++) {
-        let name = ($('#simple-field-' + i + '-name').value || '').trim();
-        let label = ($('#simple-field-' + i + '-label').value || '').trim();
-        const uiType = ($('#simple-field-' + i + '-type').value || 'text').trim();
-        const tableField = ($('#simple-field-' + i + '-tableField').value || '').trim();
-        const value1 = ($('#simple-field-' + i + '-value1').value || '').trim();
-        const op1    = ($('#simple-field-' + i + '-op1').value || '').trim();
-        const value2 = ($('#simple-field-' + i + '-value2').value || '').trim();
-        const op2    = ($('#simple-field-' + i + '-op2').value || '').trim();
-        const join1  = ($('#simple-field-' + i + '-join1').value || '').trim();
-
-        if (!name) name = 'f' + i;
-        if (!label) label = name;
-
-        // UIの型 → 内部型へのマッピング
-        let internalType;
-        switch (uiType) {
-          case 'number':
-          case 'datetime':
-          case 'date':
-          case 'time':
-            internalType = uiType;
-            break;
-          default:
-            // text / dropdown / radio / checkbox → text として扱う
-            internalType = 'text';
-        }
-
-        // tokens は内部型に応じて自動決定（日時=2、それ以外=1）
-        const tokens = internalType === 'datetime' ? 2 : 1;
-
-        fields.push({
-          name: name,
-          label: label,
-          type: internalType,
-          tokens: tokens,
-          tableField: tableField,
-          judge: {
-            valueFields: [value1, value2, '', '', ''],
-            opFields:    [op1,    op2,    '', '', ''],
-            joinFields:  [join1,  '',     '', '', '']
-          }
-        });
-      }
-
-      const cfg = {
-        spaceId: spaceId,
-        delimiterRaw: delimiterRaw,
-        delimiterIsRegex: delimiterIsRegex,
-        fields: fields,
-        table: {
-          code: (tableCodeInput.value || '').trim() || 'scan_table',
-          scanAtField: (tableScanAtInput.value || '').trim() || 'scan_at',
-          resultField: (tableResultInput.value || '').trim() || 'result',
-          reasonField: (tableReasonInput.value || '').trim() || 'reason'
-        }
-      };
-
-      const js = buildSimpleJs(cfg);
-      output.value = js;
-      status.textContent = 'JSコードを生成しました。';
-      downloadBtn.disabled = false;
-    });
-
-    downloadBtn.addEventListener('click', function () {
-      downloadJs('pc-simple-flex.js', output.value);
+  if (typeof kintone !== 'undefined' && kintone.events && kintone.app && kintone.app.record) {
+    kintone.events.on(['app.record.create.show', 'app.record.edit.show'], function (event) {
+      buildScanUI();
+      return event;
     });
   }
+`;
 
-  document.addEventListener('DOMContentLoaded', function () {
-    setupSimpleWizard();
-  });
+  const source = `${header}
+(function () {
+  'use strict';
+
+  const CFG = ${cfgJson};
+  const DELIM = ${delimLiteral};
+
+${engine}
 })();
+`;
+  return source;
+}
+
+// ====== 初期化 ======
+function init() {
+  const fieldCountInput = $("simple-field-count");
+  fieldCountInput.addEventListener("change", () => renderFields());
+
+  renderFields();
+
+  const genBtn = $("simple-generate-btn");
+  const dlBtn  = $("simple-download-btn");
+  const saveBtn= $("simple-save-config-btn");
+  const status = $("simple-status");
+  const output = $("simple-code-output");
+
+  genBtn.addEventListener("click", () => {
+    const cfg = collectConfigFromUI();
+    const js  = buildSimpleJs(cfg);
+    output.value = js;
+    status.textContent = "JSコードを生成しました。";
+    dlBtn.disabled = false;
+  });
+
+  dlBtn.addEventListener("click", () => {
+    const now = new Date();
+    const y = String(now.getFullYear());
+    const m = String(now.getMonth() + 1).padStart(2, "0");
+    const d = String(now.getDate()).padStart(2, "0");
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const ss = String(now.getSeconds()).padStart(2, "0");
+    const filename = `pc-simple-flex-${y}${m}${d}-${hh}${mm}${ss}.js`;
+    downloadJs(filename, $("simple-code-output").value);
+  });
+
+  saveBtn.addEventListener("click", () => {
+    saveCurrentConfig();
+  });
+
+  $("simple-config-select").addEventListener("change", (ev) => {
+    const id = ev.target.value;
+    if (!id || !configsCache[id]) return;
+    const data = configsCache[id];
+    if (data.payload) {
+      $("simple-config-name").value = data.name || "";
+      applyConfigToUI(data.payload);
+      $("simple-status").textContent = `設定「${data.name || "(無題)"}」を読み込みました。`;
+    }
+  });
+
+  // ログイン状態が変わったら設定一覧を更新
+  if (window.tanaAuth && typeof window.tanaAuth.onChange === "function") {
+    window.tanaAuth.onChange(() => {
+      refreshConfigList();
+    });
+  }
+  // 初期ロード
+  refreshConfigList();
+}
+
+document.addEventListener("DOMContentLoaded", init);

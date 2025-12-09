@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <title>マイページ | QR 読み取り JS 生成サービス</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+        sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+    }
+
+    header {
+      background: #111827;
+      color: #f9fafb;
+      padding: 14px 18px;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 18px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    header h1 span.icon {
+      font-size: 20px;
+    }
+
+    header small {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      color: #d1d5db;
+    }
+
+    /* ログインバー */
+    #auth-bar {
+      background: #111827;
+      border-top: 1px solid #374151;
+      padding: 4px 18px 8px;
+    }
+
+    main {
+      max-width: 1000px;
+      margin: 16px auto 32px;
+      padding: 0 12px;
+    }
+
+    .card {
+      background: #ffffff;
+      border-radius: 10px;
+      border: 1px solid #e5e7eb;
+      box-shadow: 0 4px 12px rgba(15,23,42,0.06);
+      padding: 14px 16px;
+      margin-bottom: 14px;
+    }
+
+    .card h2 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .card h2 span.icon {
+      font-size: 16px;
+    }
+
+    .card p.desc {
+      margin: 0 0 8px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 6px 10px;
+      font-size: 13px;
+    }
+
+    .info-item-label {
+      font-size: 11px;
+      color: #6b7280;
+    }
+
+    .info-item-value {
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      border-radius: 999px;
+      font-size: 11px;
+      padding: 2px 8px;
+    }
+
+    .badge-status-active {
+      background: #dcfce7;
+      color: #166534;
+    }
+    .badge-status-inactive {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+    .badge-plan {
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .configs-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .configs-tabs {
+      display: inline-flex;
+      border-radius: 999px;
+      background: #e5e7eb;
+      padding: 2px;
+      gap: 2px;
+    }
+
+    .configs-tab {
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      border: none;
+      background: transparent;
+      cursor: pointer;
+      color: #4b5563;
+    }
+
+    .configs-tab.active {
+      background: #ffffff;
+      color: #111827;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+
+    .config-list-empty {
+      font-size: 12px;
+      color: #9ca3af;
+      padding: 4px 0 2px;
+    }
+
+    table.config-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    table.config-table thead {
+      background: #f3f4f6;
+    }
+
+    table.config-table th,
+    table.config-table td {
+      padding: 4px 6px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+    }
+
+    table.config-table th {
+      font-weight: 600;
+      color: #4b5563;
+      font-size: 11px;
+    }
+
+    table.config-table td.actions {
+      white-space: nowrap;
+    }
+
+    .btn-link {
+      border: none;
+      background: none;
+      color: #2563eb;
+      font-size: 11px;
+      cursor: pointer;
+      padding: 0 4px;
+      text-decoration: underline;
+    }
+
+    .btn-link.danger {
+      color: #b91c1c;
+    }
+
+    .small-note {
+      font-size: 11px;
+      color: #9ca3af;
+      margin-top: 4px;
+    }
+
+    .generator-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+      font-size: 11px;
+    }
+
+    .generator-links a {
+      color: #2563eb;
+      text-decoration: none;
+    }
+
+    .generator-links a:hover {
+      text-decoration: underline;
+    }
+
+    .message {
+      font-size: 13px;
+      color: #374151;
+    }
+
+    .message.notice {
+      color: #6b7280;
+      font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>
+      <span class="icon">👤</span>
+      マイページ
+    </h1>
+    <small>ご利用中のプランと、保存された JS 生成設定を確認できます。</small>
+  </header>
+
+  <!-- ログインバー（auth.js が中身を描画） -->
+  <div id="auth-bar"></div>
+
+  <main>
+    <!-- ログイン状態メッセージ -->
+    <section class="card" id="my-login-message">
+      <h2><span class="icon">🔐</span>ログイン状態</h2>
+      <p class="message">ログイン情報を確認中です…</p>
+    </section>
+
+    <!-- ユーザー情報 -->
+    <section class="card" id="my-user-card" style="display:none;">
+      <h2><span class="icon">🧾</span>アカウント情報</h2>
+      <p class="desc">Firebase / Firestore 上に保存されているアカウント情報を表示します。</p>
+      <div class="info-grid" id="my-user-info"></div>
+      <p class="small-note">
+        ※ status が <strong>inactive</strong> の場合、各ジェネレーター画面で JS 出力ができないようになっています。
+      </p>
+    </section>
+
+    <!-- 設定一覧 -->
+    <section class="card" id="my-config-card" style="display:none;">
+      <div class="configs-section-header">
+        <h2><span class="icon">🧩</span>保存済み設定</h2>
+        <div class="configs-tabs" id="my-config-tabs">
+          <button class="configs-tab active" data-mode="simple">単純区切り</button>
+          <button class="configs-tab" data-mode="kv">キー型</button>
+          <button class="configs-tab" data-mode="fixed">文字数区切り</button>
+        </div>
+      </div>
+      <p class="desc">
+        各ジェネレーター画面で保存した設定を一覧表示します。<br />
+        編集したい場合は、ジェネレーター画面を開き、「保存済み設定」から選択してください。
+      </p>
+
+      <div id="my-config-list"></div>
+
+      <div class="generator-links">
+        <!-- 実際のパスに合わせて href は書き換えてOK -->
+        <span>▶ ジェネレーター画面へのショートカット：</span>
+        <a href="index-sd.html">単純区切り</a>
+        <a href="index-kv.html">キー型</a>
+        <a href="index-fw.html">文字数区切り</a>
+      </div>
+      <p class="small-note">
+        ※ このページからは設定の<strong>削除</strong>のみ行えます（生成や編集は各ジェネレーター画面で行ってください）。
+      </p>
+    </section>
+  </main>
+
+  <script type="module" src="mypage.js"></script>
+  <script type="module" src="auth.js"></script>
+</body>
+</html>

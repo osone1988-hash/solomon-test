@@ -176,7 +176,51 @@
     "reasonField": "reason"
   }
 };
+  // ===== ライセンス設定（共通） =====
+  const LICENSE = {
+    endpoint: 'https://asia-east1-qr-scan-service-std.cloudfunctions.net/checkRuntimeL',
+    // ← 今はヨシアキさんの UID 固定でOK（マイページに出ている UID）
+    uid: '8hd85hOzLdYtQfvEznhxv02711E3'
+  };
 
+  async function checkLicense() {
+    try {
+      const version = window.__TANA_PC_VERSION || '';
+      const url =
+        LICENSE.endpoint +
+        '?uid=' + encodeURIComponent(LICENSE.uid) +
+        '&version=' + encodeURIComponent(version);
+
+      const res = await fetch(url, { method: 'GET' });
+      if (!res.ok) {
+        return {
+          ok: false,
+          message: 'ライセンス確認APIエラー (HTTP ' + res.status + ')'
+        };
+      }
+
+      const data = await res.json();
+      if (!data.ok) {
+        return {
+          ok: false,
+          message: data.message || 'ライセンスが無効です',
+          plan: data.plan,
+          status: data.status
+        };
+      }
+
+      return {
+        ok: true,
+        plan: data.plan,
+        status: data.status
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        message: 'ライセンス確認に失敗しました: ' + e.message
+      };
+    }
+  }
 
   const val = (rec, code) => (code && rec[code] ? rec[code].value : '');
   const nz  = (s) => String(s === undefined || s === null ? '' : s).trim() !== '';
@@ -792,8 +836,38 @@
     });
   }
 
+    // ===== kintone 画面ロード時：ライセンスチェック → OKならUI描画 =====
   if (typeof kintone !== 'undefined' && kintone.events && kintone.app && kintone.app.record) {
-    kintone.events.on(['app.record.create.show', 'app.record.edit.show'], function (event) {
+    kintone.events.on(['app.record.create.show', 'app.record.edit.show'], async function (event) {
+      // SCAN スペース（なければフォールバック）を確保
+      const space = kintone.app.record.getSpaceElement(CFG.spaceId);
+      let mount = space;
+      if (!mount) {
+        mount = document.createElement('div');
+        mount.id = 'tana-scan-fallback';  // キー型は simple と同じフォールバックID
+        document.body.appendChild(mount);
+      }
+      while (mount.firstChild) mount.removeChild(mount.firstChild);
+
+      // 「確認中」メッセージ
+      const msg = document.createElement('div');
+      msg.textContent = 'ライセンスを確認しています…';
+      msg.style.fontSize = '12px';
+      msg.style.color = '#666';
+      msg.style.margin = '8px 0';
+      mount.appendChild(msg);
+
+      // ライセンスチェック
+      const result = await checkLicense();
+      if (!result.ok) {
+        msg.textContent =
+          'このJSのライセンスが無効です: ' +
+          (result.message || (result.status ? 'status=' + result.status : ''));
+        msg.style.color = '#b91c1c';
+        return event; // UIは出さずに終了
+      }
+
+      // OK のときだけ通常の UI を描画
       buildScanUI();
       return event;
     });

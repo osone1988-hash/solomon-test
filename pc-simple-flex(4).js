@@ -77,6 +77,32 @@
       reasonField: "reason",
     },
   };
+
+  // ===== ライセンス設定 =====
+  const LICENSE = {
+    endpoint: 'https://asia-east1-qr-scan-service-std.cloudfunctions.net/checkRuntime',
+    uid: '8hd85hOzLdYtQfvEznhxv02711E3'
+  };
+
+  async function checkLicense() {
+    try {
+      const url = LICENSE.endpoint + '?uid=' + encodeURIComponent(LICENSE.uid);
+      const res = await fetch(url, { method: 'GET' });
+      if (!res.ok) {
+        console.error('license http error', res.status);
+        return { ok: false, reason: 'http_' + res.status };
+      }
+      const data = await res.json();
+      if (!data.ok) {
+        return { ok: false, reason: data.reason || 'inactive', data: data };
+      }
+      return { ok: true, data: data };
+    } catch (e) {
+      console.error('license network error', e);
+      return { ok: false, reason: 'network_error' };
+    }
+  }
+
   const val = (rec, code) => (code && rec[code] ? rec[code].value : '');
   const nz  = (s) => String(s === undefined || s === null ? '' : s).trim() !== '';
 
@@ -549,32 +575,6 @@
     }
     while (mount.firstChild) mount.removeChild(mount.firstChild);
 
-  // ===== ライセンス設定 =====
-  const LICENSE = {
-    endpoint: ' https://asia-east1-qr-scan-service-std.cloudfunctions.net/checkRuntimeL', // 例: https://asia-east1-qr-scan-service-std.cloudfunctions.net/checkRuntime
-    uid: '8hd85hOzLdYtQfvEznhxv02711E3'                // マイページに出ている UID
-  };
-
-  async function checkLicense() {
-    try {
-      const url = LICENSE.endpoint + '?uid=' + encodeURIComponent(LICENSE.uid);
-      const res = await fetch(url, { method: 'GET' });
-      if (!res.ok) {
-        console.error('license http error', res.status);
-        return { ok: false, reason: 'http_' + res.status };
-      }
-      const data = await res.json();
-      if (!data.ok) {
-        return { ok: false, reason: data.reason || 'inactive', data };
-      }
-      return { ok: true, data };
-    } catch (e) {
-      console.error('license network error', e);
-      // 通信エラー時の扱いは好みだけど、まずは「NG扱い」にしておく
-      return { ok: false, reason: 'network_error' };
-    }
-  }
-
     const wrap = document.createElement('div');
     wrap.style.margin = '8px 0';
 
@@ -642,32 +642,30 @@
     });
   }
 
-kintone.events.on(['app.record.create.show', 'app.record.edit.show'], async function (event) {
-  const space = kintone.app.record.getSpaceElement(CFG.spaceId);
-  if (space) {
-    space.innerHTML = '<div style="font-size:12px;color:#6b7280;">ライセンスを確認しています...</div>';
-  }
-
-  const result = await checkLicense();
-
-  if (!result.ok) {
+  kintone.events.on(['app.record.create.show', 'app.record.edit.show'], async function (event) {
+    const space = kintone.app.record.getSpaceElement(CFG.spaceId);
     if (space) {
-      space.innerHTML =
-        '<div style="color:#b91c1c;font-weight:bold;font-size:12px;">' +
-        'このJSのライセンスが無効です（reason: ' +
-        (result.reason || 'unknown') +
-        '）</div>';
+      space.innerHTML = '<div style="font-size:12px;color:#6b7280;">ライセンスを確認しています...</div>';
     }
-    // ライセンスNGの場合は UI を出さず、そのまま終了
-    return event;
-  }
 
-  // ライセンスOKなら、通常どおり SCAN UI を表示
-  if (space) {
-    space.innerHTML = ''; // いったんクリア
-  }
-  buildScanUI();
-  return event;
-});
+    const result = await checkLicense();
+
+    if (!result.ok) {
+      if (space) {
+        space.innerHTML =
+          '<div style="color:#b91c1c;font-weight:bold;font-size:12px;">' +
+          'このJSのライセンスが無効です（reason: ' +
+          (result.reason || 'unknown') +
+          '）</div>';
+      }
+      return event;
+    }
+
+    if (space) {
+      space.innerHTML = '';
+    }
+    buildScanUI();
+    return event;
+  });
 
 })();

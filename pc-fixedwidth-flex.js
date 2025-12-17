@@ -78,10 +78,10 @@
   };
   // ===== ライセンス設定（共通） =====
   const LICENSE = {
-    endpoint: 'https://asia-east1-qr-scan-service-std.cloudfunctions.net/checkRuntimeL',
-    // ← 今はヨシアキさんの UID 固定でOK（マイページに出ている UID）
-    uid: '8hd85hOzLdYtQfvEznhxv02711E3'
-  };
+  endpoint: 'https://checkruntimel-6cd2lwhrea-uc.a.run.app',
+  uid: '8hd85hOzLdYtQfvEznhxv02711E3'
+};
+
 
   async function checkLicense() {
     try {

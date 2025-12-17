@@ -80,9 +80,10 @@
 
   // ===== ライセンス設定 =====
   const LICENSE = {
-    endpoint: 'https://asia-east1-qr-scan-service-std.cloudfunctions.net/checkRuntime',
-    uid: '8hd85hOzLdYtQfvEznhxv02711E3'
-  };
+  endpoint: 'https://checkruntimel-6cd2lwhrea-uc.a.run.app',
+  uid: '8hd85hOzLdYtQfvEznhxv02711E3'
+};
+
 
   async function checkLicense() {
     try {

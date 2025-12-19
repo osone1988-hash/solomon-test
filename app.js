@@ -322,7 +322,7 @@ function buildSimpleJs(config, licenseUid) {
   const engine = String.raw`
   // ===== ライセンス設定（共通） =====
   const LICENSE = {
-    endpoint: 'https://checkruntimel-6cd2lwhrea-uc.a.run.app';
+    endpoint: 'https://checkruntimel-6cd2lwhrea-uc.a.run.app',
     uid: ${uidLiteral}
   };
 
@@ -1071,3 +1071,4 @@ function init() {
 document.addEventListener("DOMContentLoaded", init);
 
 endpoint
+

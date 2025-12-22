@@ -1037,6 +1037,7 @@ function initKv() {
   const fieldCountInput = $("kv-field-count");
   fieldCountInput.addEventListener("change", () => renderKvFields());
 
+  // 最初の1回分の項目行を描画
   renderKvFields();
 
   const genBtn  = $("kv-generate-btn");
@@ -1105,6 +1106,7 @@ function initKv() {
 }
 
 document.addEventListener("DOMContentLoaded", initKv);
+
 
 
 

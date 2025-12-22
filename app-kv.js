@@ -320,7 +320,11 @@ function buildKvJs(config, licenseUid) {
     {
       spaceId: config.spaceId,
       fields: config.fields,
-      table: config.table
+      table: config.table,
+      // キー型特有オプション（現状は固定値）
+      pairDelimiterMode: "semicolon", // "semicolon" or "newline"
+      pairDelimiterChar: ";",
+      keyAssignOp: "="
     },
     null,
     2
@@ -332,27 +336,73 @@ function buildKvJs(config, licenseUid) {
   );
   const uidLiteral = JSON.stringify(licenseUid || "");
 
-  const engine = String.raw`  // ここは既存の engine 本文そのまま（省略）
-  // （既存のキー型ランタイムロジック：parseScan / evaluateAll / appendRow / buildScanUI / checkLicense など）
-`;
-
-  const source = `${header}
-(function () {
-  'use strict';
-
-  // ライセンス情報（ランタイム側で checkLicense が参照）
+  const engine = String.raw`
+  // ===== ライセンス設定（共通） =====
   const LICENSE = {
     endpoint: ${endpointLiteral},
     uid: ${uidLiteral}
   };
 
-  const CFG = ${cfgJson};
+  async function checkLicense() {
+    try {
+      const version = window.__TANA_PC_VERSION || '';
+      const url =
+        LICENSE.endpoint +
+        '?uid=' + encodeURIComponent(LICENSE.uid) +
+        '&version=' + encodeURIComponent(version);
 
-${engine}
-})();
-`;
-  return source;
-}
+      const res = await fetch(url, { method: 'GET' });
+      if (!res.ok) {
+        return {
+          ok: false,
+          message: 'ライセンス確認APIエラー (HTTP ' + res.status + ')'
+        };
+      }
+
+      const data = await res.json();
+      if (!data.ok) {
+        return {
+          ok: false,
+          message: data.message || 'ライセンスが無効です',
+          plan: data.plan,
+          status: data.status
+        };
+      }
+
+      return {
+        ok: true,
+        plan: data.plan,
+        status: data.status
+      };
+    } catch (e) {
+      return {
+        ok: false,
+        message: 'ライセンス確認に失敗しました: ' + e.message
+      };
+    }
+  }
+
+  const val = (rec, code) => (code && rec[code] ? rec[code].value : '');
+  const nz  = (s) => String(s === undefined || s === null ? '' : s).trim() !== '';
+
+  function nowIso() { return new Date().toISOString(); }
+
+  function parseTimeToMin(hhmmOrHHmm) {
+    if (!hhmmOrHHmm) return null;
+    const s = String(hhmmOrHHmm);
+    let h, m;
+    if (/^\d{2}:\d{2}$/.test(s)) {
+      h = Number(s.slice(0, 2));
+      m = Number(s.slice(3, 5));
+    } else if (/^\d{4}$/.test(s)) {
+      h = Number(s.slice(0, 2));
+      m = Number(s.slice(2, 4));
+    } else {
+      return null;
+    }
+    if (Number.isNaN(h) || Number.isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) return null;
+    return h * 60 + m;
+  }
 
   function parseDateLocal(dateStr) {
     if (!dateStr) return null;
@@ -367,6 +417,7 @@ ${engine}
       a.getDate() === b.getDate()
     );
   }
+
   function sameHM(a, b) {
     return a.getHours() === b.getHours() && a.getMinutes() === b.getMinutes();
   }
@@ -377,11 +428,11 @@ ${engine}
     return Number.isNaN(dt.getTime()) ? null : dt.toISOString();
   }
 
-  // ===== 判定関数（単純区切り版と同じ） =====
+  // ===== 判定関数 =====
   function judgeText(scan, base, op, label) {
     const specified = !!op && op !== '指定なし';
     if (!specified || base === null || base === undefined || base === '') {
-      return { specified, ok: true, reason: null };
+      return { specified: specified, ok: true, reason: null };
     }
     const s = String(scan === undefined || scan === null ? '' : scan);
     const b = String(base);
@@ -394,20 +445,20 @@ ${engine}
       case '前部一致':     ok = s.indexOf(b) === 0; break;
       case '後方一致':
       case '後部一致':     ok = s.lastIndexOf(b) === s.length - b.length; break;
-      default: return { specified, ok: true, reason: null };
+      default: return { specified: specified, ok: true, reason: null };
     }
-    return { specified, ok, reason: ok ? null : (label + ':' + op) };
+    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeNumber(scanNum, baseNum, op, label) {
     const specified = !!op && op !== '指定なし';
     if (!specified || baseNum === null || baseNum === undefined || baseNum === '' || Number.isNaN(Number(baseNum))) {
-      return { specified, ok: true, reason: null };
+      return { specified: specified, ok: true, reason: null };
     }
     const s = Number(scanNum);
     const b = Number(baseNum);
     if (Number.isNaN(s)) {
-      return { specified, ok: false, reason: label + ':' + op + ' (scan:NaN, base:' + b + ')' };
+      return { specified: specified, ok: false, reason: label + ':' + op + ' (scan:NaN, base:' + b + ')' };
     }
     let ok = true;
     switch (op) {
@@ -417,78 +468,95 @@ ${engine}
       case '以下': ok = (s <= b); break;
       case 'より大きい': ok = (s > b); break;
       case '未満': ok = (s < b); break;
-      default: return { specified, ok: true, reason: null };
+      default: return { specified: specified, ok: true, reason: null };
     }
-    return { specified, ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
+    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
   }
 
   function judgeDateTime(scanIso, baseIso, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified, ok: true, reason: null };
+    if (!specified) return { specified: specified, ok: true, reason: null };
 
     const s = scanIso ? new Date(scanIso) : null;
     const b = baseIso ? new Date(baseIso) : null;
     if (!s || !b) {
-      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
+      return {
+        specified: specified,
+        ok: false,
+        reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')'
+      };
     }
     let ok = true;
+    const st = s.getTime();
+    const bt = b.getTime();
     switch (op) {
-      case '同じ':           ok = s.getTime() === b.getTime(); break;
-      case '以外':           ok = s.getTime() !== b.getTime(); break;
-      case '以降':           ok = s.getTime() >= b.getTime(); break;
-      case '以前':           ok = s.getTime() <= b.getTime(); break;
+      case '同じ':           ok = st === bt; break;
+      case '以外':           ok = st !== bt; break;
+      case '以降':           ok = st >= bt; break;
+      case '以前':           ok = st <= bt; break;
       case '日付が同じ':     ok = sameYMD(s, b); break;
       case '日付が異なる':   ok = !sameYMD(s, b); break;
       case '時間が同じ':     ok = sameHM(s, b); break;
       case '時間が異なる':   ok = !sameHM(s, b); break;
-      default: return { specified, ok: true, reason: null };
+      default: return { specified: specified, ok: true, reason: null };
     }
-    return { specified, ok, reason: ok ? null : (label + ':' + op) };
+    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeDate(scanDateStr, baseDateStr, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified, ok: true, reason: null };
+    if (!specified) return { specified: specified, ok: true, reason: null };
 
     const s = scanDateStr ? parseDateLocal(scanDateStr) : null;
     const b = baseDateStr ? parseDateLocal(baseDateStr) : null;
     if (!s || !b) {
-      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')' };
+      return {
+        specified: specified,
+        ok: false,
+        reason: label + ':' + op + ' (scan:' + (s ? s.toISOString() : 'NaN') + ', base:' + (b ? b.toISOString() : 'NaN') + ')'
+      };
     }
     const ss = s.getTime();
     const bb = b.getTime();
     let ok = true;
     switch (op) {
-      case '同じ': ok = (ss === bb); break;
-      case '以外': ok = (ss !== bb); break;
-      case '以降': ok = (ss >= bb); break;
-      case '以前': ok = (ss <= bb); break;
-      default: return { specified, ok: true, reason: null };
+      case '同じ': ok = ss === bb; break;
+      case '以外': ok = ss !== bb; break;
+      case '以降': ok = ss >= bb; break;
+      case '以前': ok = ss <= bb; break;
+      default: return { specified: specified, ok: true, reason: null };
     }
-    return { specified, ok, reason: ok ? null : (label + ':' + op) };
+    return { specified: specified, ok: ok, reason: ok ? null : (label + ':' + op) };
   }
 
   function judgeTime(scanMin, baseTimeStr, op, label) {
     const specified = !!op && op !== '指定なし';
-    if (!specified) return { specified, ok: true, reason: null };
+    if (!specified) return { specified: specified, ok: true, reason: null };
 
     const s = (scanMin === undefined || scanMin === null) ? null : scanMin;
     const b = baseTimeStr ? parseTimeToMin(baseTimeStr) : null;
     if (s === null || b === null) {
-      return { specified, ok: false, reason: label + ':' + op + ' (scan:' + s + ', base:' + b + ')' };
+      return {
+        specified: specified,
+        ok: false,
+        reason: label + ':' + op + ' (scan:' + s + ', base:' + b + ')'
+      };
     }
     let ok = true;
     switch (op) {
-      case '同じ': ok = (s === b); break;
-      case '以外': ok = (s !== b); break;
-      case '以降': ok = (s >= b); break;
-      case '以前': ok = (s <= b); break;
-      default: return { specified, ok: true, reason: null };
+      case '同じ': ok = s === b; break;
+      case '以外': ok = s !== b; break;
+      case '以降': ok = s >= b; break;
+      case '以前': ok = s <= b; break;
+      default: return { specified: specified, ok: true, reason: null };
     }
-    return { specified, ok, reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')') };
+    return {
+      specified: specified,
+      ok: ok,
+      reason: ok ? null : (label + ':' + op + ' (scan:' + s + ', base:' + b + ')')
+    };
   }
 
-  // ===== 1項目（最大5条件）の評価 =====
   function evaluateFieldConditions(rec, parsed, fieldDef) {
     const judgeCfg = fieldDef.judge || {};
     const valueFields = judgeCfg.valueFields || [];
@@ -584,12 +652,14 @@ ${engine}
       }
     }
 
-    if (agg === null) agg = true;
+    if (agg === null) {
+      agg = true;
+    }
 
     return {
       ok: !configError && agg,
-      reasons,
-      configError
+      reasons: reasons,
+      configError: configError
     };
   }
 
@@ -612,122 +682,112 @@ ${engine}
     }
 
     if (configError) {
-      return { ok: false, reasons, configError: true };
+      return { ok: false, reasons: reasons, configError: true };
     }
-    return { ok: allOk, reasons, configError: false };
+    return { ok: allOk, reasons: reasons, configError: false };
   }
 
   // ===== キー型 SCAN パース =====
-  function extractBetween(str, before, after) {
-    const text = String(str || '');
-    const b = before || '';
-    const a = after || '';
-    const startIdx = b ? text.indexOf(b) : -1;
-    if (startIdx < 0) return null;
-    const from = startIdx + b.length;
-    let end;
-    if (a) {
-      const idx = text.indexOf(a, from);
-      end = idx >= 0 ? idx : text.length;
-    } else {
-      end = text.length;
-    }
-    return text.slice(from, end);
-  }
-
   function parseScan(raw) {
-    const text = String(raw || '');
-    const trimmed = text.trim();
-    if (!trimmed) throw new Error('SCAN が空です');
+    const text = String(raw || '').trim();
+    if (!text) throw new Error('SCAN が空です');
 
+    const assignOp = CFG.keyAssignOp || '=';
     const fields = CFG.fields || [];
+
+    const keyMap = {};
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i];
+      if (!f.key) continue;
+      keyMap[String(f.key).toLowerCase()] = f;
+    }
+
+    let pairs = [];
+    if (CFG.pairDelimiterMode === 'newline') {
+      pairs = text.split(/\r?\n/).filter(function (s) { return s.trim().length > 0; });
+    } else {
+      const ch = CFG.pairDelimiterChar || ';';
+      pairs = text.split(ch).map(function (s) { return s.trim(); }).filter(function (s) { return s.length > 0; });
+    }
+
     const parsed = { raw: text, values: {} };
 
-    for (let i = 0; i < fields.length; i++) {
-      const field = fields[i];
-      const label = field.label || field.name;
-      const before = field.before || (field.key ? (field.key + '=') : '');
-      const after  = field.after || ';';
+    for (let i = 0; i < pairs.length; i++) {
+      const line = pairs[i];
+      const idx = line.indexOf(assignOp);
+      if (idx <= 0) continue;
 
-      const segment = extractBetween(trimmed, before, after);
-      if (segment === null || segment === undefined) continue;
+      const keyRaw = line.slice(0, idx).trim();
+      const valueRaw = line.slice(idx + assignOp.length).trim();
+      if (!keyRaw) continue;
 
-      const t = String(segment).trim();
-      if (!t) continue;
+      const keyNorm = keyRaw.toLowerCase();
+      const fieldDef = keyMap[keyNorm];
+      if (!fieldDef) continue;
 
-      const info = {};
+      const info = parsed.values[fieldDef.name] || {};
 
-      switch (field.type) {
+      switch (fieldDef.type) {
         case 'text':
-          info.text = t;
+          info.text = valueRaw;
           break;
-
         case 'number': {
-          const num = Number(t);
+          const num = Number(valueRaw);
           if (Number.isNaN(num)) {
-            throw new Error('数値フィールド "' + label + '" の値が不正です: ' + t);
+            throw new Error('数値キー "' + keyRaw + '" の値が不正です (value="' + valueRaw + '")');
           }
           info.number = num;
           break;
         }
-
         case 'date': {
-          let d = t;
+          let d = valueRaw;
           if (/^\d{8}$/.test(d)) {
             d = d.slice(0, 4) + '-' + d.slice(4, 6) + '-' + d.slice(6, 8);
           } else if (/^\d{4}\/\d{2}\/\d{2}$/.test(d)) {
             d = d.replace(/\//g, '-');
           }
           if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
-            throw new Error('日付フィールド "' + label + '" の値が不正です: ' + t);
+            throw new Error('日付キー "' + keyRaw + '" の値が不正です (value="' + valueRaw + '")');
           }
           info.date = d;
           break;
         }
-
         case 'time': {
-          let tm = t;
-          if (/^\d{4}$/.test(tm)) {
-            tm = tm.slice(0, 2) + ':' + tm.slice(2, 4);
+          let t = valueRaw;
+          if (/^\d{4}$/.test(t)) {
+            t = t.slice(0, 2) + ':' + t.slice(2, 4);
           }
-          if (!/^\d{2}:\d{2}$/.test(tm)) {
-            throw new Error('時刻フィールド "' + label + '" の値が不正です: ' + t);
+          if (!/^\d{2}:\d{2}$/.test(t)) {
+            throw new Error('時刻キー "' + keyRaw + '" の値が不正です (value="' + valueRaw + '")');
           }
-          const min = parseTimeToMin(tm);
-          if (min === null) {
-            throw new Error('時刻フィールド "' + label + '" の値が不正です: ' + t);
+          const min = parseTimeToMin(t);
+          if (min == null) {
+            throw new Error('時刻キー "' + keyRaw + '" の値が不正です (value="' + valueRaw + '")');
           }
-          info.time = tm;
+          info.time = t;
           info.minutes = min;
           break;
         }
-
         case 'datetime': {
-          const sub = String(t).split(/\s+/);
-          if (sub.length < 2) {
-            throw new Error('日時フィールド "' + label + '" の値が不足しています');
-          }
-          const dateToken = sub[0];
-          const timeToken = sub[1];
-          let dateStr = dateToken;
-          let timeStr = timeToken;
-
-          if (/^\d{8}$/.test(dateStr)) {
-            dateStr = dateStr.slice(0, 4) + '-' + dateStr.slice(4, 6) + '-' + dateStr.slice(6, 8);
-          } else if (/^\d{4}\/\d{2}\/\d{2}$/.test(dateStr)) {
-            dateStr = dateStr.replace(/\//g, '-');
-          }
-          if (/^\d{4}$/.test(timeStr)) {
-            timeStr = timeStr.slice(0, 2) + ':' + timeStr.slice(2, 4);
-          }
-
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr) || !/^\d{2}:\d{2}$/.test(timeStr)) {
-            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + t);
+          const m1 = valueRaw.match(/^([0-9]{4}-[0-9]{2}-[0-9]{2})\s+([0-9]{2}:[0-9]{2})$/);
+          const m2 = valueRaw.match(/^([0-9]{8})\s+([0-9]{4})$/);
+          let dateStr;
+          let timeStr;
+          if (m1) {
+            dateStr = m1[1];
+            timeStr = m1[2];
+          } else if (m2) {
+            const ymd = m2[1];
+            dateStr = ymd.slice(0, 4) + '-' + ymd.slice(4, 6) + '-' + ymd.slice(6, 8);
+            const hm = m2[2];
+            timeStr = hm.slice(0, 2) + ':' + hm.slice(2, 4);
+          } else {
+            throw new Error('日時キー "' + keyRaw + '" の値が不正です (value="' + valueRaw + '")');
           }
 
           const iso = toIsoFromDateTimeParts(dateStr, timeStr);
           if (!iso) {
-            throw new Error('日時フィールド "' + label + '" の値が不正です: ' + t);
+            throw new Error('日時キー "' + keyRaw + '" の値が不正です (value="' + valueRaw + '")');
           }
           info.datetimeIso = iso;
           info.date = dateStr;
@@ -735,18 +795,18 @@ ${engine}
           info.minutes = parseTimeToMin(timeStr);
           break;
         }
-
         default:
-          info.raw = t;
+          info.raw = valueRaw;
+          break;
       }
 
-      parsed.values[field.name] = parsed.values[field.name] || info;
+      parsed.values[fieldDef.name] = info;
     }
 
     return parsed;
   }
 
-  // ===== サブテーブル転記・UI などは単純区切り版と同じ =====
+  // ===== サブテーブル転記 =====
   function kintoneCellTypeFromFieldType(fieldType) {
     switch (fieldType) {
       case 'number':   return 'NUMBER';
@@ -836,6 +896,7 @@ ${engine}
     table.value.push(row);
   }
 
+  // ===== UI描画 ＋ ライセンスチェック付き =====
   function buildScanUI() {
     const space = kintone.app.record.getSpaceElement(CFG.spaceId);
     let mount = space;
@@ -873,7 +934,7 @@ ${engine}
     row2.style.marginTop = '4px';
     row2.style.fontSize = '12px';
     row2.style.color = '#666';
-    row2.textContent = 'キー型の SCAN 文字列を入力して Enter（例: a=TEST;b=10;…）';
+    row2.textContent = 'key=value 形式の SCAN 文字列を入力して Enter（例: a=TEST; b=10; ...）';
 
     wrap.appendChild(row1);
     wrap.appendChild(row2);
@@ -923,8 +984,35 @@ ${engine}
     });
   }
 
+  // kintoneイベント：ライセンスチェック → OKならUI描画
   if (typeof kintone !== 'undefined' && kintone.events && kintone.app && kintone.app.record) {
-    kintone.events.on(['app.record.create.show', 'app.record.edit.show'], function (event) {
+    kintone.events.on(['app.record.create.show', 'app.record.edit.show'], async function (event) {
+      const space = kintone.app.record.getSpaceElement(CFG.spaceId);
+      let mount = space;
+      if (!mount) {
+        mount = document.createElement('div');
+        mount.id = 'tana-scan-kv-fallback';
+        document.body.appendChild(mount);
+      }
+      while (mount.firstChild) mount.removeChild(mount.firstChild);
+
+      const msg = document.createElement('div');
+      msg.textContent = 'ライセンスを確認しています…';
+      msg.style.fontSize = '12px';
+      msg.style.color = '#666';
+      msg.style.margin = '8px 0';
+      mount.appendChild(msg);
+
+      const result = await checkLicense();
+      if (!result.ok) {
+        msg.textContent =
+          'このJSのライセンスが無効です: ' +
+          (result.message || (result.status ? 'status=' + result.status : ''));
+        msg.style.color = '#b91c1c';
+        return event;
+      }
+
+      while (mount.firstChild) mount.removeChild(mount.firstChild);
       buildScanUI();
       return event;
     });
@@ -936,107 +1024,13 @@ ${engine}
   'use strict';
 
   const CFG = ${cfgJson};
-  const LICENSE = {
-    endpoint: 'https://checkruntimel-6cd2lwhrea-uc.a.run.app',
-    uid: ${uidLiteral}
-  };
-
-  async function checkLicense() {
-    try {
-      const version = window.__TANA_PC_VERSION || '';
-      const url =
-        LICENSE.endpoint +
-        '?uid=' + encodeURIComponent(LICENSE.uid) +
-        '&version=' + encodeURIComponent(version);
-
-      const res = await fetch(url, { method: 'GET' });
-      if (!res.ok) {
-        return {
-          ok: false,
-          message: 'ライセンス確認APIエラー (HTTP ' + res.status + ')'
-        };
-      }
-
-      const data = await res.json();
-      if (!data.ok) {
-        return {
-          ok: false,
-          message: data.message || 'このJSのライセンスが無効です',
-          plan: data.plan,
-          status: data.status
-        };
-      }
-
-      return {
-        ok: true,
-        plan: data.plan,
-        status: data.status
-      };
-    } catch (e) {
-      return {
-        ok: false,
-        message: 'ライセンス確認に失敗しました: ' + e.message
-      };
-    }
-  }
 
 ${engine}
-
-  // ライセンス確認で UI を制御
-  if (typeof kintone !== 'undefined' && kintone.events && kintone.app && kintone.app.record) {
-    kintone.events.on(
-      ['app.record.create.show', 'app.record.edit.show'],
-      async function (event) {
-        const space = kintone.app.record.getSpaceElement(CFG.spaceId);
-        let mount = space || document.getElementById('tana-scan-kv-fallback');
-        if (!mount) {
-          // スペースも fallback もなければ何もできない
-          return event;
-        }
-
-        // 既存のステータス行を再利用 or 作成
-        let statusLine = mount.querySelector('.tana-license-status');
-        if (!statusLine) {
-          statusLine = document.createElement('div');
-          statusLine.className = 'tana-license-status';
-          statusLine.style.fontSize = '12px';
-          statusLine.style.color = '#666';
-          statusLine.style.marginTop = '4px';
-          mount.appendChild(statusLine);
-        }
-        statusLine.textContent = 'ライセンスを確認しています...';
-        statusLine.style.color = '#666';
-
-        const lic = await checkLicense();
-        if (!lic.ok) {
-          statusLine.textContent =
-            (lic.message || 'このJSのライセンスが無効です') +
-            (lic.status ? ' (status: ' + lic.status + ')' : '');
-          statusLine.style.color = '#c00';
-
-          // 入力とボタンを無効化
-          const input = mount.querySelector('input[type="text"]');
-          if (input) input.disabled = true;
-          const buttons = mount.querySelectorAll('button');
-          buttons.forEach((b) => { b.disabled = true; });
-
-          return event;
-        }
-
-        statusLine.textContent =
-          'status: ' + (lic.status || 'active') +
-          (lic.plan ? ' / plan: ' + lic.plan : '');
-        statusLine.style.color = '#2c7';
-
-        return event;
-      }
-    );
-  }
-
 })();
 `;
   return source;
 }
+
 
 // ===== 初期化 =====
 function initKv() {

@@ -1,4 +1,4 @@
-// app-fw.js
+// app-fw.js 202512241419
 // 文字数区切り型（固定長） QR SCAN JS ジェネレーター
 // - kintone 用ランタイム JS を生成
 // - Firestore にユーザーごとの設定を保存 / 読み込み（mode: "fixed"）

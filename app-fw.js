@@ -1,4 +1,4 @@
-// app-fw.js 202512241419
+// app-fw.js 202512241623
 // 文字数区切り型（固定長） QR SCAN JS ジェネレーター
 // - kintone 用ランタイム JS を生成
 // - Firestore にユーザーごとの設定を保存 / 読み込み（mode: "fixed"）
@@ -393,6 +393,16 @@ function buildFwJs(config, licenseUid) {
     if (!dateStr) return null;
     const d = new Date(dateStr + 'T00:00:00+09:00');
     return Number.isNaN(d.getTime()) ? null : d;
+  }
+  function isDateSlashYYYYMMDD(str) {
+    if (!str || str.length !== 10) return false;
+    if (str[4] !== '/' || str[7] !== '/') return false;
+    for (var i = 0; i < 10; i++) {
+      if (i === 4 || i === 7) continue;
+      var c = str.charCodeAt(i);
+      if (c < 48 || c > 57) return false;
+    }
+    return true;
   }
 
   function sameYMD(a, b) {
@@ -839,9 +849,10 @@ function buildFwJs(config, licenseUid) {
               d.slice(4, 6) +
               '-' +
               d.slice(6, 8);
-          } else if (/^\\d{4}\\/\\d{2}\\/\\d{2}$/.test(d)) {
+                   } else if (isDateSlashYYYYMMDD(d)) {
             d = d.replace(/\\//g, '-');
           }
+
           if (!/^\\d{4}-\\d{2}-\\d{2}$/.test(d)) {
             throw new Error(
               '日付フィールド "' + label + '" の値が不正です: ' + t
@@ -888,7 +899,7 @@ function buildFwJs(config, licenseUid) {
               dateStr.slice(4, 6) +
               '-' +
               dateStr.slice(6, 8);
-          } else if (/^\\d{4}\\/\\d{2}\\/\\d{2}$/.test(dateStr)) {
+                    } else if (isDateSlashYYYYMMDD(dateStr)) {
             dateStr = dateStr.replace(/\\//g, '-');
           }
           if (/^\\d{4}$/.test(timeStr)) {

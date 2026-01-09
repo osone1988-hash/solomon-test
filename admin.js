@@ -1,6 +1,13 @@
-// admin.js
+// admin.js　　ver.3.1
 // 管理者だけが使えるユーザー管理画面
 // Firestore の users コレクションを読み書きします。
+//
+// ✅ 修正ポイント:
+// - tbody の click リスナーを { once:true } で付けていたため、最初のクリック（select を開く等）でリスナーが解除され、
+//   「保存」クリックが効かない不具合が起きていました。→ リスナーは初期化時に1回だけ登録します。
+// - 管理者判定を users/{uid}.role 依存から、allowlist（admins/{uid} の存在）優先に変更（互換として role もフォールバック）
+//
+// 推奨: セキュリティルール側も「admins/{uid} の存在」または「custom claim(admin)」で判定してください。
 
 import {
   collection,
@@ -8,6 +15,8 @@ import {
   doc,
   getDoc,
   updateDoc,
+  serverTimestamp,
+  Timestamp,
 } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
 function $(id) {
@@ -26,11 +35,45 @@ const STATUS_OPTIONS = [
 
 const ROLE_OPTIONS = [
   { value: "user", label: "user（通常ユーザー）" },
-  { value: "admin", label: "admin（管理者）" },
+  { value: "admin", label: "admin（管理者）" }, // ※ 互換表示用。権限は allowlist/claim で判定推奨
 ];
 
-// ========== 管理者チェック ==========
+// ===== trialEndsAt 表示変換 =====
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+function toDateTimeLocal(v) {
+  if (!v) return "";
+  let d = null;
+  try {
+    if (v instanceof Timestamp) d = v.toDate();
+    else if (typeof v === "string") d = new Date(v);
+    else if (typeof v === "number") d = new Date(v);
+    else if (v && typeof v.toDate === "function") d = v.toDate(); // 念のため
+  } catch (_) {}
 
+  if (!d || Number.isNaN(d.getTime())) return "";
+  return (
+    d.getFullYear() +
+    "-" +
+    pad2(d.getMonth() + 1) +
+    "-" +
+    pad2(d.getDate()) +
+    "T" +
+    pad2(d.getHours()) +
+    ":" +
+    pad2(d.getMinutes())
+  );
+}
+function fromDateTimeLocal(str) {
+  const s = String(str || "").trim();
+  if (!s) return null;
+  const d = new Date(s); // datetime-local は「ローカル時刻」として解釈されます
+  if (Number.isNaN(d.getTime())) return null;
+  return Timestamp.fromDate(d);
+}
+
+// ===== 管理者チェック =====
 async function loadCurrentUserAsAdmin() {
   const gateMsgEl = $("admin-gate-message");
   const currentUserEl = $("admin-current-user");
@@ -57,24 +100,27 @@ async function loadCurrentUserAsAdmin() {
   }
 
   try {
-    const ref = doc(db, "users", user.uid);
-    const snap = await getDoc(ref);
+    // まず自分の users/{uid} を読んで表示用情報を取得
+    const selfRef = doc(db, "users", user.uid);
+    const selfSnap = await getDoc(selfRef);
+    const self = selfSnap.exists() ? selfSnap.data() || {} : {};
 
-    if (!snap.exists()) {
-      gateMsgEl.textContent =
-        "users コレクションにあなたの情報がありません。（一度マイページにアクセスしてユーザー情報を作成してください）";
-      adminMainEl.style.display = "none";
-      currentUserEl.textContent = user.email || user.uid;
-      return null;
-    }
+    // 管理者判定：allowlist を優先（admins/{uid} の存在）
+    const adminRef = doc(db, "admins", user.uid);
+    const adminSnap = await getDoc(adminRef);
+    const isAdminAllowlist = adminSnap.exists();
 
-    const data = snap.data() || {};
-    const plan = data.plan || "free";
-    const status = data.status || "active";
-    const role = data.role || "user";
+    // 互換: 旧実装 role=admin でも一応通す（将来は削除推奨）
+    const isAdminLegacyRole = (self.role || "user") === "admin";
+
+    const isAdmin = isAdminAllowlist || isAdminLegacyRole;
+
+    const plan = self.plan || "free";
+    const status = self.status || "active";
+    const role = self.role || "user";
 
     currentUserEl.textContent =
-      (data.email || user.email || "(emailなし)") +
+      (self.email || user.email || "(emailなし)") +
       " / plan=" +
       plan +
       " / status=" +
@@ -82,19 +128,25 @@ async function loadCurrentUserAsAdmin() {
       " / role=" +
       role +
       " / uid=" +
-      user.uid;
+      user.uid +
+      (isAdminAllowlist ? " / admin=allowlist" : isAdminLegacyRole ? " / admin=legacyRole" : "");
 
-    if (role !== "admin") {
+    if (!isAdmin) {
       gateMsgEl.textContent =
-        "このページは管理者専用です（users ドキュメントの role が admin のユーザーだけが利用できます）。";
+        "このページは管理者専用です。（admins/{uid} に登録されたユーザー、または互換で users.role=admin のユーザーのみ）";
       adminMainEl.style.display = "none";
       return null;
     }
 
-    gateMsgEl.textContent = "管理者としてログインしています。";
-    adminMainEl.style.display = "block";
+    if (isAdminLegacyRole && !isAdminAllowlist) {
+      gateMsgEl.textContent =
+        "管理者としてログインしています（互換モード: users.role=admin）。推奨: admins/{uid} allowlist へ移行してください。";
+    } else {
+      gateMsgEl.textContent = "管理者としてログインしています。";
+    }
 
-    return { db, user, data };
+    adminMainEl.style.display = "block";
+    return { db, user, self, isAdminAllowlist, isAdminLegacyRole };
   } catch (e) {
     console.error("管理者チェック中にエラー:", e);
     gateMsgEl.textContent =
@@ -105,8 +157,7 @@ async function loadCurrentUserAsAdmin() {
   }
 }
 
-// ========== ユーザー一覧の描画 ==========
-
+// ===== ユーザー一覧の描画 =====
 function createSelect(options, value, className) {
   const sel = document.createElement("select");
   if (className) sel.className = className;
@@ -122,7 +173,7 @@ function createSelect(options, value, className) {
   return sel;
 }
 
-function renderUsersTable(db, usersSnap) {
+function renderUsersTable(usersSnap) {
   const tbody = $("users-tbody");
   tbody.innerHTML = "";
 
@@ -132,12 +183,12 @@ function renderUsersTable(db, usersSnap) {
 
     const tr = document.createElement("tr");
 
-    // メール
+    // email
     const tdEmail = document.createElement("td");
     tdEmail.textContent = data.email || "(emailなし)";
     tr.appendChild(tdEmail);
 
-    // UID
+    // uid
     const tdUid = document.createElement("td");
     tdUid.textContent = uid;
     tdUid.className = "mono";
@@ -145,11 +196,7 @@ function renderUsersTable(db, usersSnap) {
 
     // plan
     const tdPlan = document.createElement("td");
-    const planSel = createSelect(
-      PLAN_OPTIONS,
-      data.plan || "free",
-      "user-plan"
-    );
+    const planSel = createSelect(PLAN_OPTIONS, data.plan || "free", "user-plan");
     tdPlan.appendChild(planSel);
     tr.appendChild(tdPlan);
 
@@ -163,27 +210,32 @@ function renderUsersTable(db, usersSnap) {
     tdStatus.appendChild(statusSel);
     tr.appendChild(tdStatus);
 
-    // role
+    // role（表示/互換）
     const tdRole = document.createElement("td");
-    const roleSel = createSelect(
-      ROLE_OPTIONS,
-      data.role || "user",
-      "user-role"
-    );
+    const roleSel = createSelect(ROLE_OPTIONS, data.role || "user", "user-role");
     tdRole.appendChild(roleSel);
     tr.appendChild(tdRole);
 
-    // memo（任意）
+    // trialEndsAt（datetime-local）
+    const tdTrial = document.createElement("td");
+    const trialInput = document.createElement("input");
+    trialInput.type = "datetime-local";
+    trialInput.className = "user-trial";
+    trialInput.value = toDateTimeLocal(data.trialEndsAt);
+    tdTrial.appendChild(trialInput);
+    tr.appendChild(tdTrial);
+
+    // memo
     const tdMemo = document.createElement("td");
     const memoInput = document.createElement("input");
     memoInput.type = "text";
     memoInput.className = "user-memo";
-    memoInput.placeholder = "メモ / trial: 2026-01-31 など";
+    memoInput.placeholder = "メモ（任意）";
     memoInput.value = data.memo || "";
     tdMemo.appendChild(memoInput);
     tr.appendChild(tdMemo);
 
-    // 保存ボタン
+    // 保存
     const tdSave = document.createElement("td");
     const saveBtn = document.createElement("button");
     saveBtn.type = "button";
@@ -195,48 +247,6 @@ function renderUsersTable(db, usersSnap) {
 
     tbody.appendChild(tr);
   });
-
-  // 1つのイベントリスナーで全行の「保存」を処理
-  tbody.addEventListener("click", async (ev) => {
-    const btn = ev.target.closest("button");
-    if (!btn || !btn.dataset.uid) return;
-
-    const uid = btn.dataset.uid;
-    const row = btn.closest("tr");
-    if (!row) return;
-
-    const planSel = row.querySelector("select.user-plan");
-    const statusSel = row.querySelector("select.user-status");
-    const roleSel = row.querySelector("select.user-role");
-    const memoInput = row.querySelector("input.user-memo");
-
-    const update = {
-      plan: (planSel && planSel.value) || "free",
-      status: (statusSel && statusSel.value) || "active",
-      role: (roleSel && roleSel.value) || "user",
-      memo: memoInput ? memoInput.value : "",
-      updatedAt: new Date().toISOString(),
-    };
-
-    try {
-      btn.disabled = true;
-      btn.textContent = "保存中…";
-
-      const ref = doc(db, "users", uid);
-      await updateDoc(ref, update);
-
-      btn.textContent = "保存済み";
-      setTimeout(() => {
-        btn.textContent = "保存";
-        btn.disabled = false;
-      }, 1000);
-    } catch (e) {
-      console.error("ユーザー更新エラー:", e);
-      alert("ユーザー情報の更新に失敗しました。コンソールを確認してください。");
-      btn.textContent = "保存";
-      btn.disabled = false;
-    }
-  }, { once: true }); // tbody へのイベント登録は一度だけ
 }
 
 async function refreshUsersList(db) {
@@ -246,19 +256,94 @@ async function refreshUsersList(db) {
   try {
     const colRef = collection(db, "users");
     const snap = await getDocs(colRef);
-    const count = snap.size;
-    renderUsersTable(db, snap);
-    statusEl.textContent = count + " 件のユーザーを読み込みました。";
+    renderUsersTable(snap);
+    statusEl.textContent = snap.size + " 件のユーザーを読み込みました。";
   } catch (e) {
     console.error("ユーザー一覧取得エラー:", e);
-    statusEl.textContent = "ユーザー一覧の取得に失敗しました。コンソールを確認してください。";
+    statusEl.textContent =
+      "ユーザー一覧の取得に失敗しました。コンソールを確認してください。";
   }
 }
 
-// ========== 初期化 ==========
+// ===== 保存クリック（イベント委譲） =====
+async function handleUsersTbodyClick(ev) {
+  const btn = ev.target.closest("button");
+  if (!btn || !btn.dataset.uid) return;
 
+  const uid = btn.dataset.uid;
+  const row = btn.closest("tr");
+  if (!row) return;
+
+  const auth = window.tanaAuth;
+  const db = auth && auth.db;
+  const adminUser = auth && auth.currentUser;
+  if (!db || !adminUser) {
+    alert("ログイン状態が確認できません。ページを再読込してください。");
+    return;
+  }
+
+  const planSel = row.querySelector("select.user-plan");
+  const statusSel = row.querySelector("select.user-status");
+  const roleSel = row.querySelector("select.user-role");
+  const memoInput = row.querySelector("input.user-memo");
+  const trialInput = row.querySelector("input.user-trial");
+
+  const plan = (planSel && planSel.value) || "free";
+  const status = (statusSel && statusSel.value) || "active";
+  const role = (roleSel && roleSel.value) || "user";
+  const memo = memoInput ? memoInput.value : "";
+  const trialEndsAt = fromDateTimeLocal(trialInput ? trialInput.value : "");
+
+  // 最低限のバリデーション（ルール/サーバでも検証推奨）
+  const planOk = PLAN_OPTIONS.some((o) => o.value === plan);
+  const statusOk = STATUS_OPTIONS.some((o) => o.value === status);
+  const roleOk = ROLE_OPTIONS.some((o) => o.value === role);
+  if (!planOk || !statusOk || !roleOk) {
+    alert("入力値が不正です。再読込してやり直してください。");
+    return;
+  }
+
+  const update = {
+    plan,
+    status,
+    role,
+    memo,
+    trialEndsAt: trialEndsAt, // null なら trial 無し扱い
+    updatedAt: serverTimestamp(),
+    updatedBy: adminUser.uid,
+  };
+
+  try {
+    btn.disabled = true;
+    btn.textContent = "保存中…";
+
+    const ref = doc(db, "users", uid);
+    await updateDoc(ref, update);
+
+    btn.textContent = "保存済み";
+    setTimeout(() => {
+      btn.textContent = "保存";
+      btn.disabled = false;
+    }, 900);
+  } catch (e) {
+    console.error("ユーザー更新エラー:", e);
+    alert(
+      "ユーザー情報の更新に失敗しました。\n\n想定原因: Firestore ルールで拒否 / 管理者判定が未設定 / プロジェクト設定違い。\n\nコンソールを確認してください。"
+    );
+    btn.textContent = "保存";
+    btn.disabled = false;
+  }
+}
+
+// ===== 初期化 =====
 async function initAdminPage() {
-  // ログイン状態が変わるたびに管理者チェック＆一覧再読み込み
+  // tbody click は1回だけ登録（←重要）
+  const tbody = $("users-tbody");
+  if (tbody && !tbody.dataset.listenerAttached) {
+    tbody.addEventListener("click", handleUsersTbodyClick);
+    tbody.dataset.listenerAttached = "1";
+  }
+
   async function handleAuthChange() {
     const adminInfo = await loadCurrentUserAsAdmin();
     if (adminInfo && adminInfo.db) {
@@ -272,7 +357,6 @@ async function initAdminPage() {
     });
   }
 
-  // 初回
   await handleAuthChange();
 
   const refreshBtn = $("refresh-users-btn");

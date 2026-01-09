@@ -225,7 +225,7 @@
         </h2>
         <p class="muted">
           Firestore の <code>users</code> コレクションをそのまま表示します。<br />
-          プラン(plan)・ステータス(status)・ロール(role)を編集して「保存」を押すと、そのユーザーのドキュメントが更新されます。
+          プラン(plan)・ステータス(status)・ロール(role)・trialEndsAt を編集して「保存」を押すと、そのユーザーのドキュメントが更新されます。
         </p>
 
         <div class="toolbar">
@@ -244,6 +244,7 @@
                 <th>plan</th>
                 <th>status</th>
                 <th>role</th>
+                <th>trialEndsAt</th>
                 <th>メモ(optional)</th>
                 <th>保存</th>
               </tr>
@@ -254,9 +255,7 @@
 
         <p class="small-note">
           ※ 現状は 100 件程度の小規模利用を想定しています。将来ユーザー数が増えたら、ページングや検索を追加するイメージです。<br />
-          ※ 無料トライアル期間などを後で自動化したい場合は、「メモ」欄に
-          <code>trial: 2026-01-31</code>
-          のように書いておき、別のバッチ処理から参照する構成にできます。
+          ※ 無料トライアルを運用する場合は、trialEndsAt（日時）を設定してください。後で自動 inactive 化する処理から参照できます。
         </p>
       </section>
     </main>

@@ -1,128 +1,269 @@
 <!DOCTYPE html>
 <html lang="ja">
-<head>
-  <meta charset="UTF-8" />
-  <title>管理コンソール | QR SCAN JS サービス</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-        sans-serif;
-      margin: 0;
-      background: #f5f5f5;
-      color: #222;
-    }
-    header {
-      background: #2563eb;
-      color: #fff;
-      padding: 10px 16px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    header h1 {
-      margin: 0;
-      font-size: 16px;
-    }
-    #auth-bar {
-      font-size: 12px;
-    }
-    main {
-      max-width: 1000px;
-      margin: 16px auto 32px;
-      padding: 16px;
-      background: #fff;
-      border-radius: 8px;
-      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.1);
-    }
-    h2 {
-      margin-top: 0;
-      font-size: 18px;
-      border-bottom: 1px solid #e5e7eb;
-      padding-bottom: 4px;
-    }
-    #admin-message {
-      margin: 8px 0 16px;
-      font-size: 13px;
-      color: #374151;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-    th, td {
-      border: 1px solid #e5e7eb;
-      padding: 4px 6px;
-      vertical-align: middle;
-    }
-    th {
-      background: #f9fafb;
-      text-align: left;
-    }
-    td uid {
-      font-size: 11px;
-    }
-    select, input[type="text"] {
-      font-size: 12px;
-      padding: 2px 4px;
-    }
-    button.admin-save {
-      font-size: 12px;
-      padding: 2px 8px;
-      border-radius: 4px;
-      border: 1px solid #2563eb;
-      background: #2563eb;
-      color: #fff;
-      cursor: pointer;
-    }
-    button.admin-save[disabled] {
-      opacity: 0.6;
-      cursor: default;
-    }
-    .uid-cell {
-      font-size: 11px;
-      color: #4b5563;
-      word-break: break-all;
-    }
-    .me-row {
-      background: #eff6ff;
-    }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>管理コンソール</h1>
-    <!-- auth.js がこの中にログイン情報を描画してくれる前提 -->
+  <head>
+    <meta charset="UTF-8" />
+    <title>管理メニュー | QR SCAN JS サービス</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root {
+        --bg: #f3f4f6;
+        --card-bg: #ffffff;
+        --border: #e5e7eb;
+        --text-main: #111827;
+        --text-sub: #6b7280;
+        --accent: #2563eb;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: var(--bg);
+        color: var(--text-main);
+      }
+      header {
+        background: #111827;
+        color: white;
+        padding: 12px 16px;
+      }
+      header h1 {
+        margin: 0;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      header small {
+        font-size: 11px;
+        color: #9ca3af;
+        margin-left: 26px;
+      }
+
+      main {
+        max-width: 1000px;
+        margin: 16px auto 32px;
+        padding: 0 12px;
+      }
+      .card {
+        background: var(--card-bg);
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        padding: 14px 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+      }
+      .card h2 {
+        font-size: 15px;
+        margin: 0 0 8px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .card h2 span.icon {
+        font-size: 18px;
+      }
+      .muted {
+        font-size: 12px;
+        color: var(--text-sub);
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        margin-left: 6px;
+      }
+
+      .btn,
+      .btn-outline {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 6px 10px;
+        font-size: 12px;
+        font-weight: 600;
+        border-radius: 999px;
+        border: none;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .btn {
+        background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        color: white;
+      }
+      .btn-outline {
+        background: white;
+        color: #374151;
+        border: 1px solid #d1d5db;
+      }
+      .btn:disabled,
+      .btn-outline:disabled {
+        opacity: 0.6;
+        cursor: default;
+      }
+
+      #admin-main {
+        display: none; /* 管理者チェック OK になるまで隠しておく */
+      }
+
+      .info-row {
+        font-size: 13px;
+        margin-top: 4px;
+      }
+      .info-row code {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 12px;
+      }
+
+      .toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+        flex-wrap: wrap;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      thead {
+        background: #f9fafb;
+      }
+      th,
+      td {
+        border: 1px solid #e5e7eb;
+        padding: 4px 6px;
+        text-align: left;
+        vertical-align: middle;
+      }
+      th {
+        font-weight: 600;
+        color: #374151;
+      }
+      td.mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", "Courier New", monospace;
+        font-size: 11px;
+        word-break: break-all;
+      }
+      select,
+      input[type="text"] {
+        font-size: 12px;
+        padding: 3px 4px;
+        border-radius: 6px;
+        border: 1px solid #d1d5db;
+        background: white;
+      }
+
+      .small-note {
+        font-size: 11px;
+        color: var(--text-sub);
+        margin-top: 4px;
+      }
+
+      @media (max-width: 720px) {
+        header h1 {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+        header small {
+          margin-left: 0;
+        }
+        table {
+          font-size: 11px;
+        }
+        th,
+        td {
+          padding: 3px 4px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>
+        <span>🛠</span>
+        管理メニュー
+      </h1>
+      <small>ユーザーのプラン・ステータス・ロールを管理するページ</small>
+    </header>
+
+    <!-- ログインバー（auth.js が中身を描画） -->
     <div id="auth-bar"></div>
-  </header>
 
-  <main>
-    <h2>ユーザー一覧 &amp; プラン / ステータス編集</h2>
-    <div id="admin-message">ログイン状態を確認中…</div>
+    <main>
+      <!-- 管理者チェックの結果表示 -->
+      <section class="card">
+        <h2>
+          <span class="icon">👤</span>
+          管理者ステータス
+        </h2>
+        <div class="info-row">
+          <strong>ログイン状態:</strong>
+          <span id="admin-gate-message">ログイン状態を確認しています…</span>
+        </div>
+        <div class="info-row">
+          <strong>あなたの情報:</strong>
+          <span id="admin-current-user">---</span>
+        </div>
+      </section>
 
-    <section id="admin-panel" style="display:none;">
-      <table>
-        <thead>
-          <tr>
-            <th>メールアドレス</th>
-            <th>uid</th>
-            <th>プラン</th>
-            <th>ステータス</th>
-            <th>メモ（課金メモなど）</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="admin-users-body">
-          <!-- admin.js で行を埋め込みます -->
-        </tbody>
-      </table>
-    </section>
-  </main>
+      <!-- ここから下は admin ロールの人だけ表示 -->
+      <section class="card" id="admin-main">
+        <h2>
+          <span class="icon">📋</span>
+          ユーザー一覧
+          <span class="tag">β版</span>
+        </h2>
+        <p class="muted">
+          Firestore の <code>users</code> コレクションをそのまま表示します。<br />
+          プラン(plan)・ステータス(status)・ロール(role)を編集して「保存」を押すと、そのユーザーのドキュメントが更新されます。
+        </p>
 
-  <!-- いつもの認証まわり -->
-  <script type="module" src="./auth.js"></script>
-  <!-- 管理画面ロジック -->
-  <script type="module" src="./admin.js"></script>
-</body>
+        <div class="toolbar">
+          <button type="button" class="btn-outline" id="refresh-users-btn">
+            🔄 一覧を再読み込み
+          </button>
+          <span class="small-note" id="users-status">未読み込み</span>
+        </div>
+
+        <div style="overflow-x:auto; max-height: 520px;">
+          <table>
+            <thead>
+              <tr>
+                <th>メールアドレス</th>
+                <th>UID</th>
+                <th>plan</th>
+                <th>status</th>
+                <th>role</th>
+                <th>メモ(optional)</th>
+                <th>保存</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody"></tbody>
+          </table>
+        </div>
+
+        <p class="small-note">
+          ※ 現状は 100 件程度の小規模利用を想定しています。将来ユーザー数が増えたら、ページングや検索を追加するイメージです。<br />
+          ※ 無料トライアル期間などを後で自動化したい場合は、「メモ」欄に
+          <code>trial: 2026-01-31</code>
+          のように書いておき、別のバッチ処理から参照する構成にできます。
+        </p>
+      </section>
+    </main>
+
+    <!-- Firebase 認証バー -->
+    <script type="module" src="auth.js"></script>
+    <!-- 管理メニュー本体 -->
+    <script type="module" src="admin.js"></script>
+  </body>
 </html>

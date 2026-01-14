@@ -70,12 +70,20 @@ async function ensureUserProfile(user) {
   const snap = await getDoc(ref);
 
   if (!snap.exists()) {
-    const profile = {
-      email: user.email || "",
-      plan: "free",          // 初期プラン
-      status: "active",      // 初期ステータス
-      createdAt: serverTimestamp()
-    };
+          const profile = {
+        email: user.email || '',
+        role: 'user',                 // ★ Firestore rules の create 条件を満たすため必須
+        plan: 'free',
+        status: 'active',
+
+        // 将来の会員制御・allowedOrigins を見据えて初期値も持たせる（任意だが推奨）
+        allowedOriginsEnabled: false,
+        allowedOrigins: [],
+        trialEndsAt: null,
+        paidUntil: null,
+
+        createdAt: serverTimestamp()
+      };
     await setDoc(ref, profile, { merge: true });
     return profile;
   } else {

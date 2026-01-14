@@ -1,373 +1,303 @@
-// admin.js
-// 管理者だけが使えるユーザー管理画面
-// Firestore の users コレクションを読み書きします。
-//
-// ✅ 修正ポイント:
-// - tbody の click リスナーを { once:true } で付けていたため、最初のクリック（select を開く等）でリスナーが解除され、
-//   「保存」クリックが効かない不具合が起きていました。→ リスナーは初期化時に1回だけ登録します。
-// - 管理者判定を users/{uid}.role 依存から、allowlist（admins/{uid} の存在）優先に変更（互換として role もフォールバック）
-//
-// 推奨: セキュリティルール側も「admins/{uid} の存在」または「custom claim(admin)」で判定してください。
-
 import {
   collection,
-  getDocs,
   doc,
   getDoc,
+  getDocs,
   updateDoc,
-  serverTimestamp,
   Timestamp,
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
-function $(id) {
-  return document.getElementById(id);
+const $ = (id) => document.getElementById(id);
+
+function setGuardMessage(html) {
+  $("admin-guard").innerHTML = html;
 }
 
-const PLAN_OPTIONS = [
-  { value: "free", label: "free（無料）" },
-  { value: "pro", label: "pro（有料）" },
-];
-
-const STATUS_OPTIONS = [
-  { value: "active", label: "active（有効）" },
-  { value: "inactive", label: "inactive（停止）" },
-];
-
-const ROLE_OPTIONS = [
-  { value: "user", label: "user（通常ユーザー）" },
-  { value: "admin", label: "admin（管理者）" }, // ※ 互換表示用。権限は allowlist/claim で判定推奨
-];
-
-// ===== trialEndsAt 表示変換 =====
-function pad2(n) {
-  return String(n).padStart(2, "0");
+function showPanel(show) {
+  $("admin-panel").classList.toggle("hidden", !show);
 }
-function toDateTimeLocal(v) {
-  if (!v) return "";
-  let d = null;
-  try {
-    if (v instanceof Timestamp) d = v.toDate();
-    else if (typeof v === "string") d = new Date(v);
-    else if (typeof v === "number") d = new Date(v);
-    else if (v && typeof v.toDate === "function") d = v.toDate(); // 念のため
-  } catch (_) {}
 
-  if (!d || Number.isNaN(d.getTime())) return "";
-  return (
-    d.getFullYear() +
-    "-" +
-    pad2(d.getMonth() + 1) +
-    "-" +
-    pad2(d.getDate()) +
-    "T" +
-    pad2(d.getHours()) +
-    ":" +
-    pad2(d.getMinutes())
-  );
+function tsToYmd(ts) {
+  if (!ts) return "";
+  // Firestore Timestamp
+  if (typeof ts.toDate === "function") {
+    const d = ts.toDate();
+    const y = String(d.getFullYear());
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${dd}`;
+  }
+  // string
+  if (typeof ts === "string" && /^\d{4}-\d{2}-\d{2}$/.test(ts)) return ts;
+  return "";
 }
-function fromDateTimeLocal(str) {
-  const s = String(str || "").trim();
+
+function ymdToTs(ymd) {
+  const s = String(ymd || "").trim();
   if (!s) return null;
-  const d = new Date(s); // datetime-local は「ローカル時刻」として解釈されます
+  // JST の “その日末” にしておく（将来の自動判定で扱いやすい）
+  const d = new Date(s + "T23:59:59+09:00");
   if (Number.isNaN(d.getTime())) return null;
   return Timestamp.fromDate(d);
 }
 
-// ===== 管理者チェック =====
-async function loadCurrentUserAsAdmin() {
-  const gateMsgEl = $("admin-gate-message");
-  const currentUserEl = $("admin-current-user");
-  const adminMainEl = $("admin-main");
+function normalizeOrigins(text) {
+  const lines = String(text || "")
+    .split(/\r?\n/)
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
 
-  const auth = window.tanaAuth;
-  const user = auth && auth.currentUser;
-  const db = auth && auth.db;
-
-  if (!auth || !db) {
-    gateMsgEl.textContent =
-      "auth.js の初期化がまだのようです。ページを再読込してみてください。";
-    adminMainEl.style.display = "none";
-    currentUserEl.textContent = "---";
-    return null;
+  // 重複削除（順序維持）
+  const seen = new Set();
+  const out = [];
+  for (const v of lines) {
+    if (seen.has(v)) continue;
+    seen.add(v);
+    out.push(v);
   }
-
-  if (!user) {
-    gateMsgEl.textContent =
-      "ログインしていません。右上のログインメニューからログインしてください。";
-    adminMainEl.style.display = "none";
-    currentUserEl.textContent = "---";
-    return null;
-  }
-
-  try {
-    // まず自分の users/{uid} を読んで表示用情報を取得
-    const selfRef = doc(db, "users", user.uid);
-    const selfSnap = await getDoc(selfRef);
-    const self = selfSnap.exists() ? selfSnap.data() || {} : {};
-
-    // 管理者判定：allowlist を優先（admins/{uid} の存在）
-    const adminRef = doc(db, "admins", user.uid);
-    const adminSnap = await getDoc(adminRef);
-    const isAdminAllowlist = adminSnap.exists();
-
-    // 互換: 旧実装 role=admin でも一応通す（将来は削除推奨）
-    const isAdminLegacyRole = (self.role || "user") === "admin";
-
-    const isAdmin = isAdminAllowlist || isAdminLegacyRole;
-
-    const plan = self.plan || "free";
-    const status = self.status || "active";
-    const role = self.role || "user";
-
-    currentUserEl.textContent =
-      (self.email || user.email || "(emailなし)") +
-      " / plan=" +
-      plan +
-      " / status=" +
-      status +
-      " / role=" +
-      role +
-      " / uid=" +
-      user.uid +
-      (isAdminAllowlist ? " / admin=allowlist" : isAdminLegacyRole ? " / admin=legacyRole" : "");
-
-    if (!isAdmin) {
-      gateMsgEl.textContent =
-        "このページは管理者専用です。（admins/{uid} に登録されたユーザー、または互換で users.role=admin のユーザーのみ）";
-      adminMainEl.style.display = "none";
-      return null;
-    }
-
-    if (isAdminLegacyRole && !isAdminAllowlist) {
-      gateMsgEl.textContent =
-        "管理者としてログインしています（互換モード: users.role=admin）。推奨: admins/{uid} allowlist へ移行してください。";
-    } else {
-      gateMsgEl.textContent = "管理者としてログインしています。";
-    }
-
-    adminMainEl.style.display = "block";
-    return { db, user, self, isAdminAllowlist, isAdminLegacyRole };
-  } catch (e) {
-    console.error("管理者チェック中にエラー:", e);
-    gateMsgEl.textContent =
-      "管理者情報の取得に失敗しました。コンソールを確認してください。";
-    adminMainEl.style.display = "none";
-    currentUserEl.textContent = "---";
-    return null;
-  }
+  return out;
 }
 
-// ===== ユーザー一覧の描画 =====
-function createSelect(options, value, className) {
-  const sel = document.createElement("select");
-  if (className) sel.className = className;
-  options.forEach((opt) => {
-    const o = document.createElement("option");
-    o.value = opt.value;
-    o.textContent = opt.label;
-    sel.appendChild(o);
-  });
-  if (value && options.some((o) => o.value === value)) {
-    sel.value = value;
-  }
-  return sel;
+async function isCurrentUserAdmin(db, user) {
+  if (!db || !user) return false;
+  const ref = doc(db, "users", user.uid);
+  const snap = await getDoc(ref);
+  const data = snap.exists() ? snap.data() : null;
+  return !!data && data.role === "admin";
 }
 
-function renderUsersTable(usersSnap) {
-  const tbody = $("users-tbody");
-  tbody.innerHTML = "";
+function renderRow({ uid, email, status, plan, trialEndsAt, paidUntil, allowedOriginsEnabled, allowedOrigins }) {
+  const tr = document.createElement("tr");
+  tr.dataset.uid = uid;
+  tr.dataset.email = email || "";
 
-  usersSnap.forEach((docSnap) => {
-    const data = docSnap.data() || {};
-    const uid = docSnap.id;
+  const userTd = document.createElement("td");
+  userTd.innerHTML = `
+    <div class="mini"><strong>${email || "(no email)"}</strong></div>
+    <div class="muted mini">uid: <code>${uid}</code></div>
+  `;
 
-    const tr = document.createElement("tr");
+  const statusTd = document.createElement("td");
+  const statusSel = document.createElement("select");
+  statusSel.innerHTML = `
+    <option value="active">active</option>
+    <option value="inactive">inactive</option>
+  `;
+  statusSel.value = status || "active";
+  statusTd.appendChild(statusSel);
 
-    // email
-    const tdEmail = document.createElement("td");
-    tdEmail.textContent = data.email || "(emailなし)";
-    tr.appendChild(tdEmail);
+  const planTd = document.createElement("td");
+  const planSel = document.createElement("select");
+  planSel.innerHTML = `
+    <option value="free">free</option>
+    <option value="pro">pro</option>
+  `;
+  planSel.value = plan || "free";
+  planTd.appendChild(planSel);
 
-    // uid
-    const tdUid = document.createElement("td");
-    tdUid.textContent = uid;
-    tdUid.className = "mono";
-    tr.appendChild(tdUid);
+  const trialTd = document.createElement("td");
+  const trialInput = document.createElement("input");
+  trialInput.type = "date";
+  trialInput.value = tsToYmd(trialEndsAt);
+  trialTd.appendChild(trialInput);
 
-    // plan
-    const tdPlan = document.createElement("td");
-    const planSel = createSelect(PLAN_OPTIONS, data.plan || "free", "user-plan");
-    tdPlan.appendChild(planSel);
-    tr.appendChild(tdPlan);
+  const paidTd = document.createElement("td");
+  const paidInput = document.createElement("input");
+  paidInput.type = "date";
+  paidInput.value = tsToYmd(paidUntil);
+  paidTd.appendChild(paidInput);
 
-    // status
-    const tdStatus = document.createElement("td");
-    const statusSel = createSelect(
-      STATUS_OPTIONS,
-      data.status || "active",
-      "user-status"
-    );
-    tdStatus.appendChild(statusSel);
-    tr.appendChild(tdStatus);
+  const originsTd = document.createElement("td");
 
-    // role（表示/互換）
-    const tdRole = document.createElement("td");
-    const roleSel = createSelect(ROLE_OPTIONS, data.role || "user", "user-role");
-    tdRole.appendChild(roleSel);
-    tr.appendChild(tdRole);
+  const enabledWrap = document.createElement("label");
+  enabledWrap.className = "mini";
+  enabledWrap.style.display = "flex";
+  enabledWrap.style.alignItems = "center";
+  enabledWrap.style.gap = "6px";
 
-    // trialEndsAt（datetime-local）
-    const tdTrial = document.createElement("td");
-    const trialInput = document.createElement("input");
-    trialInput.type = "datetime-local";
-    trialInput.className = "user-trial";
-    trialInput.value = toDateTimeLocal(data.trialEndsAt);
-    tdTrial.appendChild(trialInput);
-    tr.appendChild(tdTrial);
+  const enabledChk = document.createElement("input");
+  enabledChk.type = "checkbox";
+  enabledChk.checked = !!allowedOriginsEnabled;
 
-    // memo
-    const tdMemo = document.createElement("td");
-    const memoInput = document.createElement("input");
-    memoInput.type = "text";
-    memoInput.className = "user-memo";
-    memoInput.placeholder = "メモ（任意）";
-    memoInput.value = data.memo || "";
-    tdMemo.appendChild(memoInput);
-    tr.appendChild(tdMemo);
+  const enabledText = document.createElement("span");
+  enabledText.textContent = "有効化（将来用）";
 
-    // 保存
-    const tdSave = document.createElement("td");
-    const saveBtn = document.createElement("button");
-    saveBtn.type = "button";
-    saveBtn.textContent = "保存";
-    saveBtn.className = "btn-outline";
-    saveBtn.dataset.uid = uid;
-    tdSave.appendChild(saveBtn);
-    tr.appendChild(tdSave);
+  enabledWrap.appendChild(enabledChk);
+  enabledWrap.appendChild(enabledText);
 
-    tbody.appendChild(tr);
-  });
-}
+  const originsTa = document.createElement("textarea");
+  originsTa.placeholder = "例:\nhttps://xxxx.cybozu.com\nhttps://xxxx.kintone.com";
+  originsTa.value = Array.isArray(allowedOrigins) ? allowedOrigins.join("\n") : "";
 
-async function refreshUsersList(db) {
-  const statusEl = $("users-status");
-  statusEl.textContent = "ユーザー一覧を読み込み中…";
+  originsTd.appendChild(enabledWrap);
+  originsTd.appendChild(originsTa);
 
-  try {
-    const colRef = collection(db, "users");
-    const snap = await getDocs(colRef);
-    renderUsersTable(snap);
-    statusEl.textContent = snap.size + " 件のユーザーを読み込みました。";
-  } catch (e) {
-    console.error("ユーザー一覧取得エラー:", e);
-    statusEl.textContent =
-      "ユーザー一覧の取得に失敗しました。コンソールを確認してください。";
-  }
-}
+  const actionTd = document.createElement("td");
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "primary";
+  saveBtn.textContent = "保存";
 
-// ===== 保存クリック（イベント委譲） =====
-async function handleUsersTbodyClick(ev) {
-  const btn = ev.target.closest("button");
-  if (!btn || !btn.dataset.uid) return;
+  const oneMonthBtn = document.createElement("button");
+  oneMonthBtn.textContent = "30日無料(試用)";
+  oneMonthBtn.style.marginLeft = "6px";
 
-  const uid = btn.dataset.uid;
-  const row = btn.closest("tr");
-  if (!row) return;
+  actionTd.appendChild(saveBtn);
+  actionTd.appendChild(oneMonthBtn);
 
-  const auth = window.tanaAuth;
-  const db = auth && auth.db;
-  const adminUser = auth && auth.currentUser;
-  if (!db || !adminUser) {
-    alert("ログイン状態が確認できません。ページを再読込してください。");
-    return;
-  }
+  tr.appendChild(userTd);
+  tr.appendChild(statusTd);
+  tr.appendChild(planTd);
+  tr.appendChild(trialTd);
+  tr.appendChild(paidTd);
+  tr.appendChild(originsTd);
+  tr.appendChild(actionTd);
 
-  const planSel = row.querySelector("select.user-plan");
-  const statusSel = row.querySelector("select.user-status");
-  const roleSel = row.querySelector("select.user-role");
-  const memoInput = row.querySelector("input.user-memo");
-  const trialInput = row.querySelector("input.user-trial");
-
-  const plan = (planSel && planSel.value) || "free";
-  const status = (statusSel && statusSel.value) || "active";
-  const role = (roleSel && roleSel.value) || "user";
-  const memo = memoInput ? memoInput.value : "";
-  const trialEndsAt = fromDateTimeLocal(trialInput ? trialInput.value : "");
-
-  // 最低限のバリデーション（ルール/サーバでも検証推奨）
-  const planOk = PLAN_OPTIONS.some((o) => o.value === plan);
-  const statusOk = STATUS_OPTIONS.some((o) => o.value === status);
-  const roleOk = ROLE_OPTIONS.some((o) => o.value === role);
-  if (!planOk || !statusOk || !roleOk) {
-    alert("入力値が不正です。再読込してやり直してください。");
-    return;
-  }
-
-  const update = {
-    plan,
-    status,
-    role,
-    memo,
-    trialEndsAt: trialEndsAt, // null なら trial 無し扱い
-    updatedAt: serverTimestamp(),
-    updatedBy: adminUser.uid,
+  tr._controls = {
+    statusSel,
+    planSel,
+    trialInput,
+    paidInput,
+    enabledChk,
+    originsTa,
+    saveBtn,
+    oneMonthBtn
   };
 
-  try {
-    btn.disabled = true;
-    btn.textContent = "保存中…";
+  return tr;
+}
 
-    const ref = doc(db, "users", uid);
-    await updateDoc(ref, update);
+async function loadAllUsers(db) {
+  const snap = await getDocs(collection(db, "users"));
+  const list = [];
+  snap.forEach((d) => {
+    const data = d.data() || {};
+    list.push({
+      uid: d.id,
+      email: data.email || "",
+      status: data.status || "active",
+      plan: data.plan || "free",
+      role: data.role || "user",
+      trialEndsAt: data.trialEndsAt || null,
+      paidUntil: data.paidUntil || null,
+      allowedOriginsEnabled: !!data.allowedOriginsEnabled,
+      allowedOrigins: Array.isArray(data.allowedOrigins) ? data.allowedOrigins : []
+    });
+  });
 
-    btn.textContent = "保存済み";
-    setTimeout(() => {
-      btn.textContent = "保存";
-      btn.disabled = false;
-    }, 900);
-  } catch (e) {
-    console.error("ユーザー更新エラー:", e);
-    alert(
-      "ユーザー情報の更新に失敗しました。\n\n想定原因: Firestore ルールで拒否 / 管理者判定が未設定 / プロジェクト設定違い。\n\nコンソールを確認してください。"
-    );
-    btn.textContent = "保存";
-    btn.disabled = false;
+  // email優先で見やすくソート
+  list.sort((a, b) => String(a.email).localeCompare(String(b.email)));
+  return list;
+}
+
+function applyFilter() {
+  const q = String($("user-filter").value || "").trim().toLowerCase();
+  const rows = Array.from($("users-body").querySelectorAll("tr"));
+  for (const tr of rows) {
+    const uid = (tr.dataset.uid || "").toLowerCase();
+    const email = (tr.dataset.email || "").toLowerCase();
+    const show = !q || uid.includes(q) || email.includes(q);
+    tr.style.display = show ? "" : "none";
   }
 }
 
-// ===== 初期化 =====
-async function initAdminPage() {
-  // tbody click は1回だけ登録（←重要）
-  const tbody = $("users-tbody");
-  if (tbody && !tbody.dataset.listenerAttached) {
-    tbody.addEventListener("click", handleUsersTbodyClick);
-    tbody.dataset.listenerAttached = "1";
+async function main() {
+  showPanel(false);
+  setGuardMessage(`<div class="muted">ログイン情報を確認中…</div>`);
+
+  const auth = window.tanaAuth;
+  if (!auth || typeof auth.onChange !== "function") {
+    setGuardMessage(`<div class="muted">auth.js が読み込めていません。</div>`);
+    return;
   }
 
-  async function handleAuthChange() {
-    const adminInfo = await loadCurrentUserAsAdmin();
-    if (adminInfo && adminInfo.db) {
-      await refreshUsersList(adminInfo.db);
+  auth.onChange(async () => {
+    const user = auth.currentUser;
+    const db = auth.db;
+
+    if (!user || !db) {
+      showPanel(false);
+      setGuardMessage(`<div class="muted">管理者メニューはログインが必要です。</div>`);
+      return;
     }
-  }
 
-  if (window.tanaAuth && typeof window.tanaAuth.onChange === "function") {
-    window.tanaAuth.onChange(() => {
-      handleAuthChange();
-    });
-  }
+    const admin = await isCurrentUserAdmin(db, user);
+    if (!admin) {
+      showPanel(false);
+      setGuardMessage(`
+        <div><strong>権限がありません。</strong></div>
+        <div class="muted">このページは管理者（運営者）専用です。Firestore の users/{uid} に role="admin" を設定してください。</div>
+      `);
+      return;
+    }
 
-  await handleAuthChange();
+    setGuardMessage(`<div class="chip ok">管理者としてログイン中</div>`);
+    showPanel(true);
 
-  const refreshBtn = $("refresh-users-btn");
-  if (refreshBtn) {
-    refreshBtn.addEventListener("click", async () => {
-      const auth = window.tanaAuth;
-      const db = auth && auth.db;
-      if (!db) return;
-      await refreshUsersList(db);
-    });
-  }
+    const statusEl = $("admin-status");
+    const reloadBtn = $("reload-btn");
+
+    async function reload() {
+      statusEl.textContent = "読込中…";
+      $("users-body").innerHTML = "";
+      try {
+        const users = await loadAllUsers(db);
+
+        for (const u of users) {
+          const tr = renderRow(u);
+
+          tr._controls.saveBtn.addEventListener("click", async () => {
+            tr._controls.saveBtn.disabled = true;
+            try {
+              const patch = {
+                status: tr._controls.statusSel.value,
+                plan: tr._controls.planSel.value,
+                trialEndsAt: ymdToTs(tr._controls.trialInput.value),
+                paidUntil: ymdToTs(tr._controls.paidInput.value),
+                allowedOriginsEnabled: !!tr._controls.enabledChk.checked,
+                allowedOrigins: normalizeOrigins(tr._controls.originsTa.value),
+                updatedAt: serverTimestamp()
+              };
+
+              // null は削除ではなく null で入るのが嫌ならここで消す
+              if (patch.trialEndsAt === null) delete patch.trialEndsAt;
+              if (patch.paidUntil === null) delete patch.paidUntil;
+
+              await updateDoc(doc(db, "users", u.uid), patch);
+              statusEl.textContent = `保存しました: ${u.email || u.uid}`;
+            } catch (e) {
+              console.error(e);
+              statusEl.textContent = "保存エラー: " + (e && e.message ? e.message : String(e));
+            } finally {
+              tr._controls.saveBtn.disabled = false;
+            }
+          });
+
+          tr._controls.oneMonthBtn.addEventListener("click", () => {
+            const d = new Date();
+            d.setDate(d.getDate() + 30);
+            const y = String(d.getFullYear());
+            const m = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+            tr._controls.trialInput.value = `${y}-${m}-${dd}`;
+          });
+
+          $("users-body").appendChild(tr);
+        }
+
+        statusEl.textContent = `ユーザー ${users.length} 件を読み込みました。`;
+        applyFilter();
+      } catch (e) {
+        console.error(e);
+        statusEl.textContent = "読込エラー: " + (e && e.message ? e.message : String(e));
+      }
+    }
+
+    reloadBtn.onclick = reload;
+    $("user-filter").addEventListener("input", applyFilter);
+
+    await reload();
+  });
 }
 
-document.addEventListener("DOMContentLoaded", initAdminPage);
+document.addEventListener("DOMContentLoaded", main);

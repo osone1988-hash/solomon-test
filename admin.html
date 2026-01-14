@@ -1,268 +1,104 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ja">
-  <head>
-    <meta charset="UTF-8" />
-    <title>管理メニュー | QR SCAN JS サービス</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style>
-      :root {
-        --bg: #f3f4f6;
-        --card-bg: #ffffff;
-        --border: #e5e7eb;
-        --text-main: #111827;
-        --text-sub: #6b7280;
-        --accent: #2563eb;
-      }
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          sans-serif;
-        background: var(--bg);
-        color: var(--text-main);
-      }
-      header {
-        background: #111827;
-        color: white;
-        padding: 12px 16px;
-      }
-      header h1 {
-        margin: 0;
-        font-size: 18px;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-      header small {
-        font-size: 11px;
-        color: #9ca3af;
-        margin-left: 26px;
-      }
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>管理者メニュー | ソロモン</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 0; background:#f6f7fb; }
+    header { background: #111827; color: #fff; padding: 14px 16px; }
+    header h1 { font-size: 16px; margin: 0; }
+    main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+    .card { background:#fff; border:1px solid #e5e7eb; border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; }
+    .muted { color:#6b7280; font-size: 12px; }
+    .row { display:flex; gap:10px; align-items:center; flex-wrap: wrap; }
+    input, select, textarea, button {
+      font: inherit;
+    }
+    input, select, textarea {
+      border:1px solid #d1d5db; border-radius: 8px; padding: 6px 8px; background:#fff;
+    }
+    textarea { width: 100%; min-height: 74px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; }
+    button { border-radius: 999px; padding: 7px 12px; border:1px solid #d1d5db; background:#fff; cursor:pointer; }
+    button.primary { background:#2563eb; color:#fff; border-color:#1d4ed8; }
+    button.danger { background:#ef4444; color:#fff; border-color:#dc2626; }
+    button:disabled { opacity:.5; cursor: default; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { border-bottom:1px solid #e5e7eb; padding: 8px; vertical-align: top; }
+    th { text-align:left; font-size: 12px; color:#374151; background:#f9fafb; position: sticky; top: 0; }
+    .mini { font-size: 12px; }
+    .chip { display:inline-block; padding: 2px 8px; border-radius: 999px; background:#f3f4f6; font-size: 12px; }
+    .ok { background:#dcfce7; }
+    .ng { background:#fee2e2; }
+    nav a { color:#c7d2fe; margin-right: 10px; font-size: 12px; text-decoration: none; }
+    nav a:hover { text-decoration: underline; }
+    .hidden { display:none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>管理者メニュー</h1>
+    <nav style="margin-top:6px;">
+      <a href="index.html">TOP</a>
+      <a href="index-sd.html">単純区切り</a>
+      <a href="index-kv.html">キー型</a>
+      <a href="index-fw.html">固定長</a>
+      <a href="mypage.html">マイページ</a>
+      <a href="admin.html">管理者</a>
+    </nav>
+  </header>
 
-      main {
-        max-width: 1000px;
-        margin: 16px auto 32px;
-        padding: 0 12px;
-      }
-      .card {
-        background: var(--card-bg);
-        border-radius: 12px;
-        border: 1px solid var(--border);
-        padding: 14px 16px;
-        margin-bottom: 12px;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-      }
-      .card h2 {
-        font-size: 15px;
-        margin: 0 0 8px;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .card h2 span.icon {
-        font-size: 18px;
-      }
-      .muted {
-        font-size: 12px;
-        color: var(--text-sub);
-      }
+  <!-- ログインバー（auth.js が中身を描画） -->
+  <div id="auth-bar"></div>
 
-      .tag {
-        display: inline-flex;
-        align-items: center;
-        padding: 2px 8px;
-        border-radius: 999px;
-        font-size: 11px;
-        background: #eff6ff;
-        color: #1d4ed8;
-        margin-left: 6px;
-      }
+  <main>
+    <section class="card">
+      <div id="admin-guard">
+        <div class="muted">ログイン情報を確認中…</div>
+      </div>
 
-      .btn,
-      .btn-outline {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 4px;
-        padding: 6px 10px;
-        font-size: 12px;
-        font-weight: 600;
-        border-radius: 999px;
-        border: none;
-        cursor: pointer;
-        white-space: nowrap;
-      }
-      .btn {
-        background: linear-gradient(135deg, #2563eb, #1d4ed8);
-        color: white;
-      }
-      .btn-outline {
-        background: white;
-        color: #374151;
-        border: 1px solid #d1d5db;
-      }
-      .btn:disabled,
-      .btn-outline:disabled {
-        opacity: 0.6;
-        cursor: default;
-      }
+      <div id="admin-panel" class="hidden">
+        <div class="row" style="justify-content: space-between;">
+          <div class="row">
+            <input id="user-filter" type="text" placeholder="uid / email で絞り込み" style="min-width: 280px;" />
+            <button id="reload-btn">再読込</button>
+          </div>
 
-      #admin-main {
-        display: none; /* 管理者チェック OK になるまで隠しておく */
-      }
-
-      .info-row {
-        font-size: 13px;
-        margin-top: 4px;
-      }
-      .info-row code {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
-        font-size: 12px;
-      }
-
-      .toolbar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 8px;
-        flex-wrap: wrap;
-      }
-
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 12px;
-      }
-      thead {
-        background: #f9fafb;
-      }
-      th,
-      td {
-        border: 1px solid #e5e7eb;
-        padding: 4px 6px;
-        text-align: left;
-        vertical-align: middle;
-      }
-      th {
-        font-weight: 600;
-        color: #374151;
-      }
-      td.mono {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-          "Liberation Mono", "Courier New", monospace;
-        font-size: 11px;
-        word-break: break-all;
-      }
-      select,
-      input[type="text"] {
-        font-size: 12px;
-        padding: 3px 4px;
-        border-radius: 6px;
-        border: 1px solid #d1d5db;
-        background: white;
-      }
-
-      .small-note {
-        font-size: 11px;
-        color: var(--text-sub);
-        margin-top: 4px;
-      }
-
-      @media (max-width: 720px) {
-        header h1 {
-          flex-direction: column;
-          align-items: flex-start;
-        }
-        header small {
-          margin-left: 0;
-        }
-        table {
-          font-size: 11px;
-        }
-        th,
-        td {
-          padding: 3px 4px;
-        }
-      }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>
-        <span>🛠</span>
-        管理メニュー
-      </h1>
-      <small>ユーザーのプラン・ステータス・ロールを管理するページ</small>
-    </header>
-
-    <!-- ログインバー（auth.js が中身を描画） -->
-    <div id="auth-bar"></div>
-
-    <main>
-      <!-- 管理者チェックの結果表示 -->
-      <section class="card">
-        <h2>
-          <span class="icon">👤</span>
-          管理者ステータス
-        </h2>
-        <div class="info-row">
-          <strong>ログイン状態:</strong>
-          <span id="admin-gate-message">ログイン状態を確認しています…</span>
-        </div>
-        <div class="info-row">
-          <strong>あなたの情報:</strong>
-          <span id="admin-current-user">---</span>
-        </div>
-      </section>
-
-      <!-- ここから下は admin ロールの人だけ表示 -->
-      <section class="card" id="admin-main">
-        <h2>
-          <span class="icon">📋</span>
-          ユーザー一覧
-          <span class="tag">β版</span>
-        </h2>
-        <p class="muted">
-          Firestore の <code>users</code> コレクションをそのまま表示します。<br />
-          プラン(plan)・ステータス(status)・ロール(role)・trialEndsAt を編集して「保存」を押すと、そのユーザーのドキュメントが更新されます。
-        </p>
-
-        <div class="toolbar">
-          <button type="button" class="btn-outline" id="refresh-users-btn">
-            🔄 一覧を再読み込み
-          </button>
-          <span class="small-note" id="users-status">未読み込み</span>
+          <div class="row">
+            <span class="muted">allowedOrigins は “枠” として保存のみ（今は強制しない想定）</span>
+          </div>
         </div>
 
-        <div style="overflow-x:auto; max-height: 520px;">
+        <div id="admin-status" class="muted" style="margin-top:8px;"></div>
+
+        <div style="overflow:auto; max-height: 70vh; margin-top: 10px;">
           <table>
             <thead>
               <tr>
-                <th>メールアドレス</th>
-                <th>UID</th>
-                <th>plan</th>
-                <th>status</th>
-                <th>role</th>
-                <th>trialEndsAt</th>
-                <th>メモ(optional)</th>
-                <th>保存</th>
+                <th style="min-width: 220px;">ユーザー</th>
+                <th style="min-width: 120px;">status</th>
+                <th style="min-width: 120px;">plan</th>
+                <th style="min-width: 140px;">trialEndsAt</th>
+                <th style="min-width: 140px;">paidUntil</th>
+                <th style="min-width: 140px;">allowedOrigins</th>
+                <th style="min-width: 140px;">操作</th>
               </tr>
             </thead>
-            <tbody id="users-tbody"></tbody>
+            <tbody id="users-body"></tbody>
           </table>
         </div>
+      </div>
+    </section>
 
-        <p class="small-note">
-          ※ 現状は 100 件程度の小規模利用を想定しています。将来ユーザー数が増えたら、ページングや検索を追加するイメージです。<br />
-          ※ 無料トライアルを運用する場合は、trialEndsAt（日時）を設定してください。後で自動 inactive 化する処理から参照できます。
-        </p>
-      </section>
-    </main>
+    <section class="card">
+      <div class="muted">
+        メモ：設定保存は <code>users/{uid}/configs</code> を利用しています（現状維持）
+      </div>
+    </section>
+  </main>
 
-    <!-- Firebase 認証バー -->
-    <script type="module" src="auth.js"></script>
-    <!-- 管理メニュー本体 -->
-    <script type="module" src="admin.js"></script>
-  </body>
+  <!-- 既存の auth.js を使う前提 -->
+  <script type="module" src="auth.js"></script>
+  <script type="module" src="admin.js"></script>
+</body>
 </html>

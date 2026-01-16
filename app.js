@@ -328,7 +328,7 @@ function buildSimpleJs(config, licenseUid) {
 
   async function checkLicense() {
     try {
-      const version = window.__TANA_PC_VERSION || '';
+      const version = window.__TANA_PC_VERSION || 'simple';
       const url =
         LICENSE.endpoint +
         '?uid=' + encodeURIComponent(LICENSE.uid) +
@@ -1070,5 +1070,4 @@ function init() {
 
 document.addEventListener("DOMContentLoaded", init);
 
-endpoint
 

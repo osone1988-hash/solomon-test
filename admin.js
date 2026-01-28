@@ -89,11 +89,31 @@ function renderRow({ uid, email, status, plan, trialEndsAt, paidUntil, allowedOr
 
   const planTd = document.createElement("td");
   const planSel = document.createElement("select");
-  planSel.innerHTML = `
-    <option value="free">free</option>
-    <option value="pro">pro</option>
-  `;
-  planSel.value = plan || "free";
+
+  // plan の選択肢（Stripe / Firestore と合わせる）
+  const planOptions = [
+    { value: "free", label: "free" },
+    { value: "standard", label: "standard" },
+    { value: "advance", label: "advance" },
+    // legacy（過去データ互換）
+    { value: "pro", label: "pro (legacy)" },
+    { value: "paid", label: "paid (legacy)" },
+  ];
+
+  planSel.innerHTML = planOptions
+    .map((o) => `<option value="${o.value}">${o.label}</option>`)
+    .join("");
+
+  const currentPlan = plan || "free";
+  // 未知の plan 値でも消えないように表示だけ追加
+  if (!planOptions.some((o) => o.value === currentPlan)) {
+    const opt = document.createElement("option");
+    opt.value = currentPlan;
+    opt.textContent = `${currentPlan} (unknown)`;
+    planSel.appendChild(opt);
+  }
+  planSel.value = currentPlan;
+
   planTd.appendChild(planSel);
 
   const trialTd = document.createElement("td");

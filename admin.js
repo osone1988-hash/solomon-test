@@ -10,6 +10,42 @@ import {
 
 const $ = (id) => document.getElementById(id);
 
+
+// ===== Plan mapping =====
+// Firestore / runtime / Stripe で plan の表記ゆれが出た場合に、管理画面側で吸収します。
+// 例：旧実装で plan="paid" や plan="pro" が入っても、UIでは standard として扱えるようにする。
+const PLAN_LABELS = {
+  free: 'free',
+  standard: 'standard',
+  advance: 'advance'
+};
+
+const PLAN_ALIASES = {
+  pro: 'standard',
+  paid: 'standard'
+};
+
+function normalizePlan(plan) {
+  const p = String(plan || '').trim().toLowerCase();
+  return PLAN_ALIASES[p] || p || 'free';
+}
+
+function ensureSelectHasValue(selectEl, value) {
+  const exists = Array.from(selectEl.options).some((o) => o.value === value);
+  if (!exists) {
+    const opt = document.createElement('option');
+    opt.value = value;
+    opt.textContent = value + ' (unknown)';
+    selectEl.appendChild(opt);
+  }
+}
+
+function buildPlanOptionsHtml() {
+  return Object.keys(PLAN_LABELS)
+    .map((v) => `<option value="${v}">${PLAN_LABELS[v]}</option>`)
+    .join('');
+}
+
 function setGuardMessage(html) {
   $("admin-guard").innerHTML = html;
 }
@@ -89,31 +125,12 @@ function renderRow({ uid, email, status, plan, trialEndsAt, paidUntil, allowedOr
 
   const planTd = document.createElement("td");
   const planSel = document.createElement("select");
-
-  // plan の選択肢（Stripe / Firestore と合わせる）
-  const planOptions = [
-    { value: "free", label: "free" },
-    { value: "standard", label: "standard" },
-    { value: "advance", label: "advance" },
-    // legacy（過去データ互換）
-    { value: "pro", label: "pro (legacy)" },
-    { value: "paid", label: "paid (legacy)" },
-  ];
-
-  planSel.innerHTML = planOptions
-    .map((o) => `<option value="${o.value}">${o.label}</option>`)
-    .join("");
-
-  const currentPlan = plan || "free";
-  // 未知の plan 値でも消えないように表示だけ追加
-  if (!planOptions.some((o) => o.value === currentPlan)) {
-    const opt = document.createElement("option");
-    opt.value = currentPlan;
-    opt.textContent = `${currentPlan} (unknown)`;
-    planSel.appendChild(opt);
-  }
-  planSel.value = currentPlan;
-
+  planSel.innerHTML = `
+    ${buildPlanOptionsHtml()}
+  `;
+  const normalizedPlan = normalizePlan(plan);
+  ensureSelectHasValue(planSel, normalizedPlan);
+  planSel.value = normalizedPlan;
   planTd.appendChild(planSel);
 
   const trialTd = document.createElement("td");

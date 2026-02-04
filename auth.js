@@ -96,7 +96,7 @@ async function ensureUserProfile(user) {
 
   return snap.data();
 }
-}
+
 
 // --- 認証状態 + プロファイル監視 ---
 onAuthStateChanged(auth, (user) => {

@@ -71,17 +71,23 @@ async function ensureUserProfile(user) {
   const snap = await getDoc(ref);
 
   if (!snap.exists()) {
-      const TRIAL_MONTHS = 3; // ← 1か月にしたいなら 1 にする
-      const trialEnd = new Date();
-      trialEnd.setMonth(trialEnd.getMonth() + TRIAL_MONTHS);
-      trialEnd.setHours(23, 59, 59, 999);
-          const profile = {
+        const profile = {
         email: user.email || '',
         role: 'user',                 // ★ Firestore rules の create 条件を満たすため必須
         plan: 'free',
         status: 'active',
         allowedOrigins: [],
-        trialEndsAt: Timestamp.fromDate(trialEnd),
+       // 30日無料
+const trialDate = new Date();
+trialDate.setDate(trialDate.getDate() + 30);
+
+const profile = {
+  // ...
+  trialEndsAt: Timestamp.fromDate(trialDate),
+  paidUntil: null,
+  createdAt: serverTimestamp()
+};
+
         paidUntil: null,
         createdAt: serverTimestamp()
       };

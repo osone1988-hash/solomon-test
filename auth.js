@@ -19,7 +19,8 @@ import {
   doc,
   getDoc,
   setDoc,
-  serverTimestamp
+  serverTimestamp,
+  Timestamp
 } from "https://www.gstatic.com/firebasejs/11.1.0/firebase-firestore.js";
 
 // Your web app's Firebase configuration
@@ -70,18 +71,18 @@ async function ensureUserProfile(user) {
   const snap = await getDoc(ref);
 
   if (!snap.exists()) {
+      const TRIAL_MONTHS = 3; // ← 1か月にしたいなら 1 にする
+      const trialEnd = new Date();
+      trialEnd.setMonth(trialEnd.getMonth() + TRIAL_MONTHS);
+      trialEnd.setHours(23, 59, 59, 999);
           const profile = {
         email: user.email || '',
         role: 'user',                 // ★ Firestore rules の create 条件を満たすため必須
         plan: 'free',
         status: 'active',
-
-        // 将来の会員制御・allowedOrigins を見据えて初期値も持たせる（任意だが推奨）
-        allowedOriginsEnabled: false,
         allowedOrigins: [],
-        trialEndsAt: null,
+        trialEndsAt: Timestamp.fromDate(trialEnd),
         paidUntil: null,
-
         createdAt: serverTimestamp()
       };
     await setDoc(ref, profile, { merge: true });

@@ -312,7 +312,7 @@ async function main() {
 
           tr._controls.oneMonthBtn.addEventListener("click", () => {
             const d = new Date();
-            d.setDate(d.getDate() + 30);
+           d.setMonth(d.getMonth() + 3);
             const y = String(d.getFullYear());
             const m = String(d.getMonth() + 1).padStart(2, "0");
             const dd = String(d.getDate()).padStart(2, "0");

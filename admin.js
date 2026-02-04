@@ -72,7 +72,7 @@ function tsToYmd(ts) {
 function ymdToTs(ymd) {
   const s = String(ymd || "").trim();
   if (!s) return null;
-　 d.setDate(d.getDate() + 30);
+　
   const d = new Date(s + "T23:59:59+09:00");
   if (Number.isNaN(d.getTime())) return null;
   return Timestamp.fromDate(d);

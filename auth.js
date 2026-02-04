@@ -71,31 +71,31 @@ async function ensureUserProfile(user) {
   const snap = await getDoc(ref);
 
   if (!snap.exists()) {
-        const profile = {
-        email: user.email || '',
-        role: 'user',                 // ★ Firestore rules の create 条件を満たすため必須
-        plan: 'free',
-        status: 'active',
-        allowedOrigins: [],
-       // 30日無料
-const trialDate = new Date();
-trialDate.setDate(trialDate.getDate() + 30);
+    // 30日無料（登録日 + 30日）
+    const trialDate = new Date();
+    trialDate.setDate(trialDate.getDate() + 30);
 
-const profile = {
-  // ...
-  trialEndsAt: Timestamp.fromDate(trialDate),
-  paidUntil: null,
-  createdAt: serverTimestamp()
-};
+    const profile = {
+      email: user.email || "",
+      role: "user",                 // create で admin を作れないように固定
+      plan: "free",
+      status: "active",
 
-        paidUntil: null,
-        createdAt: serverTimestamp()
-      };
-    await setDoc(ref, profile, { merge: true });
+      // ルール側で要求する初期値
+      allowedOriginsEnabled: false,
+      allowedOrigins: [],
+
+      trialEndsAt: Timestamp.fromDate(trialDate),
+      paidUntil: null,
+      createdAt: serverTimestamp(),
+    };
+
+    await setDoc(ref, profile); // merge:true 不要（新規作成なので）
     return profile;
-  } else {
-    return snap.data();
   }
+
+  return snap.data();
+}
 }
 
 // --- 認証状態 + プロファイル監視 ---

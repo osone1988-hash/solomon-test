@@ -72,7 +72,7 @@ function tsToYmd(ts) {
 function ymdToTs(ymd) {
   const s = String(ymd || "").trim();
   if (!s) return null;
-　
+  // JST の “その日末” にしておく（将来の自動判定で扱いやすい）
   const d = new Date(s + "T23:59:59+09:00");
   if (Number.isNaN(d.getTime())) return null;
   return Timestamp.fromDate(d);
@@ -312,7 +312,7 @@ async function main() {
 
           tr._controls.oneMonthBtn.addEventListener("click", () => {
             const d = new Date();
-           d.setMonth(d.getMonth() + 3);
+           d.setDate(d.getDate() + 30);
             const y = String(d.getFullYear());
             const m = String(d.getMonth() + 1).padStart(2, "0");
             const dd = String(d.getDate()).padStart(2, "0");
